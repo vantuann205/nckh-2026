@@ -4,7 +4,7 @@ from pyspark.sql.types import *
 from delta import *
 import os
 
-class TrafficDataProcessor
+class TrafficDataProcessor:
     def __init__(self):
         builder = SparkSession.builder \
             .appName("TrafficBigDataAnalytics") \
