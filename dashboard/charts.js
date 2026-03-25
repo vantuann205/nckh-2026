@@ -117,7 +117,7 @@ async function renderVehicleCharts() {
             labels: distData.slice(0, 6).map(d => d.district),
             datasets: [{
                 data: distData.slice(0, 6).map(d => d.count),
-                backgroundColor: [PALETTE.blue + '0.8)', PALETTE.cyan + '0.8)', PALETTE.purple + '0.8)', PALETTE.green + '0.8)', PALETTE.orange + '0.8)', PALETTE.pink + '0.8)']
+                backgroundColor: [PALETTE.blue + '0.7)', PALETTE.cyan + '0.7)', PALETTE.purple + '0.7)', PALETTE.green + '0.7)', PALETTE.orange + '0.7)', PALETTE.red + '0.7)']
             }]
         },
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } }
@@ -130,23 +130,43 @@ async function renderVehicleCharts() {
             labels: weatherData.map(d => d.weather),
             datasets: [{
                 data: weatherData.map(d => d.count),
-                backgroundColor: [PALETTE.cyan + '0.8)', PALETTE.blue + '0.8)', PALETTE.orange + '0.8)', PALETTE.red + '0.8)']
+                backgroundColor: [PALETTE.cyan + '0.8)', PALETTE.blue + '0.8)', PALETTE.yellow + '0.8)', PALETTE.red + '0.8)']
             }]
         },
         options: { responsive: true, maintainAspectRatio: false }
     });
 
-    // 6. Fuel Overview (Simulated buckets)
+    // 6. Fuel Overview (Simulated buckets based on summary)
     mkChart('chart-fuel', {
         type: 'doughnut',
         data: {
-            labels: ['Low (<15%)', 'Medium (15-60%)', 'High (>60%)'],
+            labels: ['Thấp (<15%)', 'Trung bình (15-60%)', 'Cao (>60%)'],
             datasets: [{
-                data: [DB.summary.alerts, DB.summary.total * 0.4, DB.summary.total * 0.55],
+                data: [DB.summary.alerts, Math.floor(DB.summary.total * 0.35), Math.floor(DB.summary.total * 0.6)],
                 backgroundColor: [PALETTE.red + '0.8)', PALETTE.yellow + '0.8)', PALETTE.green + '0.8)']
             }]
         },
         options: { responsive: true, maintainAspectRatio: false, cutout: '65%' }
+    });
+
+    // 7. Passenger Loading (New missing chart)
+    mkChart('chart-pass-type', {
+        type: 'bar',
+        data: {
+            labels: ['1-2 người', '3-4 người', '5-10 người', '>10 người'],
+            datasets: [{
+                label: 'Số lượng xe',
+                data: [Math.floor(DB.summary.total * 0.4), Math.floor(DB.summary.total * 0.3), Math.floor(DB.summary.total * 0.15), Math.floor(DB.summary.total * 0.15)],
+                backgroundColor: PALETTE.purple + '0.8)',
+                borderRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { x: { grid: { display: false } }, y: { grid: gridLines() } }
+        }
     });
 }
 

@@ -5,39 +5,50 @@ let VIOLATIONS_DATA = [];
 
 // ── ROUTER ────────────────────────────────────────────────────────────────────
 async function navigate(page, navEl) {
-  if (page === CURRENT_PAGE && navEl) return;
+  // Avoid full re-render if we are already on this page
+  if (page === CURRENT_PAGE && !navEl) {
+    console.log(`♻️ Skipping full re-render for ${page}, updating data instead...`);
+    updatePageData(page);
+    return;
+  }
 
   CURRENT_PAGE = page;
 
   // Update Sidebar Active State
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  if (navEl && navEl.classList) navEl.classList.add('active');
-  else {
-    const el = document.querySelector(`[data-page="${page}"]`);
-    if (el) el.classList.add('active');
+  if (navEl && navEl.classList) {
+    navEl.classList.add('active');
+  } else {
+    // Find item with matching onclick or data-page
+    const items = document.querySelectorAll('.nav-item');
+    items.forEach(item => {
+      if (item.getAttribute('onclick')?.includes(`'${page}'`)) {
+        item.classList.add('active');
+      }
+    });
   }
 
   // Update Breadcrumbs
   const crumbs = {
-    dashboard: 'Dashboard / Overview',
-    map: 'Dashboard / Traffic Map',
-    explorer: 'Data Management / Explorer',
-    vehicle: 'Data Management / Analytics',
-    alerts: 'Operations / Alerts',
-    query: 'Operations / SQL Query',
-    monitor: 'System / Monitoring',
+    dashboard: 'Bảng điều khiển / Tổng quan',
+    map: 'Bảng điều khiển / Bản đồ giao thông',
+    explorer: 'Quản lý dữ liệu / Tra cứu',
+    vehicle: 'Quản lý dữ liệu / Phân tích',
+    alerts: 'Vận hành / Cảnh báo',
+    monitor: 'Hệ thống / Giám sát',
   };
   const bcSpan = document.querySelector('.breadcrumbs span');
-  if (bcSpan) bcSpan.textContent = crumbs[page] || `Dashboard / ${page}`;
+  if (bcSpan) bcSpan.textContent = crumbs[page] || `Bảng điều khiển / ${page}`;
 
   // Inject Template
   const content = document.getElementById('content');
   const template = PAGES[page];
   if (!template) {
-    content.innerHTML = `<div style="padding:40px;color:var(--text2)">Page "${page}" not found</div>`;
+    content.innerHTML = `<div style="padding:40px;color:var(--text2)">Không tìm thấy trang "${page}"</div>`;
     return;
   }
 
+  console.log(`🚀 Rendering page: ${page}`);
   content.innerHTML = template();
   content.scrollTop = 0;
 
@@ -50,7 +61,11 @@ async function navigate(page, navEl) {
       renderDashboardCharts();
       break;
     case 'map':
-      setTimeout(initMap, 100);
+      console.log('🗺️ Map page detected, calling initMap...');
+      setTimeout(() => {
+        if (window.initMap) window.initMap();
+        else console.warn('🗺️ window.initMap not found!');
+      }, 150);
       break;
     case 'explorer':
       updateExplorer();
@@ -61,13 +76,13 @@ async function navigate(page, navEl) {
     case 'alerts':
       const rows = await DB.query({ limit: 100 });
       VIOLATIONS_DATA = rows;
-      renderAlertCharts(VIOLATIONS_DATA);
-      renderViolations();
+      if (window.renderAlertCharts) renderAlertCharts(VIOLATIONS_DATA);
+      if (window.renderViolations) renderViolations();
       break;
     case 'monitor':
-      renderMonitorCharts();
-      renderSparkJobs();
-      renderWorkerNodes();
+      if (window.renderMonitorCharts) renderMonitorCharts();
+      if (window.renderSparkJobs) renderSparkJobs();
+      if (window.renderWorkerNodes) renderWorkerNodes();
       break;
   }
 }
@@ -125,13 +140,13 @@ window.addEventListener('DOMContentLoaded', () => {
         <i data-lucide="zap" style="width:28px; height:28px"></i>
       </div>
       <div style="text-align:center">
-        <div style="font-size:24px;font-weight:800; letter-spacing:-0.03em; margin-bottom:4px">Smart Traffic Lakehouse</div>
-        <div style="font-size:14px;color:var(--text3)" id="boot-status">Warming up Spark Cluster...</div>
+        <div style="font-size:24px;font-weight:800; letter-spacing:-0.03em; margin-bottom:4px">Hệ thống Phân tích Giao thông</div>
+        <div style="font-size:14px;color:var(--text3)" id="boot-status">Đang kết nối trung tâm dữ liệu...</div>
       </div>
       <div style="width:280px;background:#f1f5f9;border-radius:99px;height:8px; overflow:hidden">
         <div id="boot-bar" style="height:100%;border-radius:99px;background:var(--accent);width:0;transition:width .4s ease-out"></div>
       </div>
-      <div style="font-size:12px;font-family:var(--mono);color:var(--text3); opacity:0.6" id="boot-rows">Initializing Big Data Engine...</div>
+      <div style="font-size:12px;font-family:var(--mono);color:var(--text3); opacity:0.6" id="boot-rows">Đang khởi tạo công cụ Big Data...</div>
     </div>`;
 
   if (window.lucide) lucide.createIcons();
@@ -141,7 +156,7 @@ window.addEventListener('DOMContentLoaded', () => {
       const bar = document.getElementById('boot-bar');
       const info = document.getElementById('boot-rows');
       if (bar) bar.style.width = pct + '%';
-      if (info) info.textContent = `Optimizing Data Ingestion: ${pct}%`;
+      if (info) info.textContent = `Đang tối ưu hóa dữ liệu: ${pct}%`;
     },
     () => {
       setTimeout(() => navigate('dashboard'), 300);
@@ -149,11 +164,41 @@ window.addEventListener('DOMContentLoaded', () => {
   );
 });
 
-// Real-time Event Listener
+// Real-time Event Listener - Smart Refresh
 window.addEventListener('lakehouse-update', () => {
-  console.log('📢 Refreshing current page due to real-time sync...');
-  navigate(CURRENT_PAGE);
+  console.log('📢 Lakehouse update detected. Updating current page data...');
+  updatePageData(CURRENT_PAGE);
 });
+
+async function updatePageData(page) {
+  switch (page) {
+    case 'dashboard':
+      // Update KPIs in place
+      const s = DB.summary;
+      const fmt = n => Number(n).toLocaleString();
+      if (document.getElementById('kpi-total')) document.getElementById('kpi-total').textContent = fmt(s.total);
+      if (document.getElementById('kpi-speed')) document.getElementById('kpi-speed').innerHTML = `${s.avgSpeed} <span style="font-size:14px;color:var(--text3)">km/h</span>`;
+      if (document.getElementById('kpi-active')) document.getElementById('kpi-active').textContent = fmt(s.active);
+      if (document.getElementById('kpi-alerts')) document.getElementById('kpi-alerts').textContent = fmt(s.alerts);
+      if (document.getElementById('kpi-cong')) document.getElementById('kpi-cong').textContent = fmt(s.congested);
+      // Charts usually need re-render or update
+      renderDashboardCharts();
+      break;
+    case 'map':
+      // Only refresh points, don't re-init map!
+      if (window.renderMapPoints) renderMapPoints();
+      break;
+    case 'explorer':
+      updateExplorer();
+      break;
+    case 'vehicle':
+      renderVehicleCharts();
+      break;
+    case 'alerts':
+      renderViolations();
+      break;
+  }
+}
 
 // Globals
 window.navigate = navigate;

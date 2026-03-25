@@ -51,7 +51,7 @@ export const DB = {
           window.dispatchEvent(new CustomEvent('lakehouse-update'));
         }
       } catch (e) { }
-    }, 5000);
+    }, 2000);
   },
 
   async refresh() {

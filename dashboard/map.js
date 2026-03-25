@@ -4,23 +4,40 @@ let MAP_LAYER = null;
 let HEATMAP_ON = false;
 
 async function initMap() {
-  if (MAP_INSTANCE) { MAP_INSTANCE.remove(); MAP_INSTANCE = null; }
+  console.log('🗺️ initMap() called...');
+  if (MAP_INSTANCE) {
+    console.log('🗺️ Existing instance found, removing...');
+    MAP_INSTANCE.remove(); MAP_INSTANCE = null;
+  }
   const el = document.getElementById('traffic-map');
-  if (!el) return;
+  console.log('🗺️ Map container element:', el);
+  if (!el) {
+    console.warn('🗺️ ERROR: #traffic-map container not found in DOM!');
+    return;
+  }
 
   MAP_INSTANCE = L.map('traffic-map', {
-    center: [10.762, 106.660], zoom: 12,
+    center: [10.7591, 106.6759], zoom: 13,
     zoomControl: true, attributionControl: false,
   });
+  console.log('🗺️ Leaflet instance initialized:', MAP_INSTANCE);
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
   }).addTo(MAP_INSTANCE);
+  console.log('🗺️ Tile layer added.');
 
   await renderMapPoints();
   renderMapCharts();
   renderSpeedMeters();
   renderHotspots();
+
+  setTimeout(() => {
+    if (MAP_INSTANCE) {
+      console.log('🗺️ invalidatingSize()...');
+      MAP_INSTANCE.invalidateSize();
+    }
+  }, 500);
 }
 
 function getMarkerColor(r) {
@@ -32,29 +49,37 @@ function getMarkerColor(r) {
 
 async function renderMapPoints(filtered) {
   if (!MAP_INSTANCE) return;
-  if (MAP_LAYER) { MAP_LAYER.clearLayers(); }
-  else { MAP_LAYER = L.layerGroup().addTo(MAP_INSTANCE); }
+  console.log('🗺️ renderMapPoints() called...');
 
-  const pts = filtered || await DB.getMapData(1500); // Fetch real points
-  const label = document.getElementById('map-count-label');
-  if (label) label.textContent = `${pts.length.toLocaleString()} vehicles shown (sampled from Lakehouse)`;
+  if (!MAP_LAYER) {
+    MAP_LAYER = L.layerGroup().addTo(MAP_INSTANCE);
+  } else {
+    MAP_LAYER.clearLayers();
+  }
+
+  const pts = filtered || await DB.getMapData(2000);
+  console.log(`🗺️ Rendering ${pts.length} points...`);
 
   pts.forEach(r => {
+    if (!r.lat || !r.lng) return;
     const color = getMarkerColor(r);
     const marker = L.circleMarker([r.lat, r.lng], {
-      radius: r.vehicle_type === 'Bus' || r.vehicle_type === 'Truck' ? 6 : 4,
+      radius: r.vehicle_type === 'Bus' || r.vehicle_type === 'Truck' ? 7 : 5,
       fillColor: color,
-      color: 'transparent',
-      fillOpacity: 0.75,
-      weight: 0,
+      color: '#fff',
+      fillOpacity: 0.85,
+      weight: 1.5,
     });
     marker.bindPopup(`
       <div style="font-family:Inter,sans-serif;font-size:13px;min-width:200px">
-        <b style="color:#3b82f6">${r.vehicle_id}</b>
-        <hr style="border-color:#f1f5f9;margin:6px 0"/>
-        <div>Type: ${r.vehicle_type}</div>
-        <div>Speed: <b style="color:${color}">${r.speed_kmph} km/h</b></div>
-        <div>Congestion: ${r.congestion || 'Normal'}</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+          <b style="color:#3b82f6; font-size:14px">${r.vehicle_id}</b>
+          <span style="font-size:11px; background:#f1f5f9; padding:2px 8px; border-radius:10px">${r.vehicle_type}</span>
+        </div>
+        <hr style="border-color:#f1f5f9;margin:8px 0"/>
+        <div style="margin-bottom:4px">Vận tốc: <b style="color:${color}">${r.speed_kmph} km/h</b></div>
+        <div style="margin-bottom:4px">Khu vực: <b>${r.district || 'N/A'}</b></div>
+        <div>Trạng thái: <b>${r.congestion === 'High' ? 'Kẹt xe' : 'Thông thoáng'}</b></div>
       </div>
     `);
     MAP_LAYER.addLayer(marker);
@@ -67,11 +92,15 @@ function applyMapFilter() {
 
 async function refreshMapPoints() {
   const btn = document.getElementById('map-refresh-btn');
-  if (btn) { btn.textContent = '⏳ Fetching Lakehouse…'; btn.disabled = true; }
+  if (btn) { btn.innerHTML = '<i data-lucide="refresh-cw" class="spin"></i> Đang tải...'; btn.disabled = true; }
 
   await renderMapPoints();
 
-  if (btn) { btn.textContent = '🔄 Refresh'; btn.disabled = false; }
+  if (btn) {
+    btn.innerHTML = '<i data-lucide="refresh-cw"></i> Cập nhật';
+    btn.disabled = false;
+    if (window.lucide) lucide.createIcons();
+  }
 }
 
 function toggleHeatmap() {
@@ -83,9 +112,9 @@ function toggleHeatmap() {
   }
 }
 
-// Stats helpers
-function renderSpeedMeters() { }
-function renderHotspots() { }
-function renderMapCharts() {
-  if (window.renderDashboardCharts) renderDashboardCharts();
-}
+// Export to window
+window.initMap = initMap;
+window.renderMapPoints = renderMapPoints;
+window.refreshMapPoints = refreshMapPoints;
+window.toggleHeatmap = toggleHeatmap;
+window.applyMapFilter = applyMapFilter;
