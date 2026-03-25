@@ -1,193 +1,263 @@
-// ─── OPTIMIZED CHART REGISTRY ──────────────────────────────────────────────────
-const CHART_INSTANCES = {};
+/**
+ * Charts Module — Real-time Chart.js charts
+ * Updates data in-place without full re-render
+ */
 
-const PALETTE = {
-    blue: 'rgba(59,130,246,',
-    cyan: 'rgba(6,182,212,',
-    green: 'rgba(16,185,129,',
-    yellow: 'rgba(245,158,11,',
-    red: 'rgba(239,68,68,',
-    purple: 'rgba(139,92,246,',
-    orange: 'rgba(249,115,22,',
+let chartInstances = {};
+
+function destroyChart(id) {
+  if (chartInstances[id]) {
+    chartInstances[id].destroy();
+    delete chartInstances[id];
+  }
+}
+
+function getChartColors() {
+  return {
+    green: '#22c55e',
+    yellow: '#f59e0b',
+    red: '#ef4444',
+    blue: '#3b82f6',
+    purple: '#8b5cf6',
+    cyan: '#06b6d4',
+    pink: '#ec4899',
+    indigo: '#6366f1',
+    palette: ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'],
+  };
+}
+
+// === Dashboard Charts ===
+
+window.renderDashboardCharts = function () {
+  const roads = DB.state.roads || [];
+  if (roads.length === 0) return;
+
+  const colors = getChartColors();
+
+  // 1. Speed Distribution (Doughnut)
+  renderSpeedDistribution(roads, colors);
+
+  // 2. Status Distribution (Bar)
+  renderStatusDistribution(roads, colors);
+
+  // 3. Speed Trend (Line) — recent window data per road
+  renderSpeedOverview(roads, colors);
 };
 
-const TYPE_COLORS = {
-    'Motorbike': PALETTE.blue + '0.85)',
-    'Car': PALETTE.cyan + '0.85)',
-    'Bus': PALETTE.green + '0.85)',
-    'Truck': PALETTE.yellow + '0.85)',
-    'Taxi': PALETTE.orange + '0.85)',
-    'Electric Car': PALETTE.purple + '0.85)',
+function renderSpeedDistribution(roads, colors) {
+  const ctx = document.getElementById('chart-speed-dist');
+  if (!ctx) return;
+
+  const buckets = { '0-20': 0, '20-40': 0, '40-60': 0, '60-80': 0, '80+': 0 };
+  roads.forEach(r => {
+    const speed = parseFloat(r.avg_speed || 0);
+    if (speed < 20) buckets['0-20']++;
+    else if (speed < 40) buckets['20-40']++;
+    else if (speed < 60) buckets['40-60']++;
+    else if (speed < 80) buckets['60-80']++;
+    else buckets['80+']++;
+  });
+
+  destroyChart('speed-dist');
+  chartInstances['speed-dist'] = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: Object.keys(buckets),
+      datasets: [{
+        data: Object.values(buckets),
+        backgroundColor: [colors.red, colors.yellow, colors.blue, colors.green, colors.purple],
+        borderWidth: 2,
+        borderColor: '#fff',
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { padding: 12, font: { size: 11 } } },
+      },
+    },
+  });
+}
+
+function renderStatusDistribution(roads, colors) {
+  const ctx = document.getElementById('chart-status');
+  if (!ctx) return;
+
+  const counts = { normal: 0, slow: 0, congested: 0 };
+  roads.forEach(r => {
+    const status = r.status || 'normal';
+    counts[status] = (counts[status] || 0) + 1;
+  });
+
+  destroyChart('status');
+  chartInstances['status'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: ['Bình thường', 'Chậm', 'Tắc'],
+      datasets: [{
+        label: 'Số đoạn đường',
+        data: [counts.normal, counts.slow, counts.congested],
+        backgroundColor: [colors.green + 'cc', colors.yellow + 'cc', colors.red + 'cc'],
+        borderColor: [colors.green, colors.yellow, colors.red],
+        borderWidth: 2,
+        borderRadius: 8,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, ticks: { stepSize: 1, font: { size: 11 } }, grid: { color: '#f1f5f9' } },
+        x: { ticks: { font: { size: 11 } }, grid: { display: false } },
+      },
+    },
+  });
+}
+
+function renderSpeedOverview(roads, colors) {
+  const ctx = document.getElementById('chart-speed-overview');
+  if (!ctx) return;
+
+  // Sort roads by speed
+  const sorted = [...roads].sort((a, b) => parseFloat(a.avg_speed || 0) - parseFloat(b.avg_speed || 0));
+  const labels = sorted.map(r => r.road_id ? r.road_id.replace('road_', '') : '');
+  const speeds = sorted.map(r => parseFloat(r.avg_speed || 0));
+  const barColors = speeds.map(s => s < 20 ? colors.red : s < 40 ? colors.yellow : colors.green);
+
+  destroyChart('speed-overview');
+  chartInstances['speed-overview'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Tốc độ TB (km/h)',
+        data: speeds,
+        backgroundColor: barColors.map(c => c + '99'),
+        borderColor: barColors,
+        borderWidth: 2,
+        borderRadius: 6,
+      }],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { beginAtZero: true, max: 100, grid: { color: '#f1f5f9' }, ticks: { font: { size: 10 } } },
+        y: { ticks: { font: { size: 10, family: 'JetBrains Mono' } }, grid: { display: false } },
+      },
+    },
+  });
+}
+
+// === Vehicle / Alert Charts ===
+window.renderVehicleCharts = function () {
+  const roads = DB.state.roads || [];
+  if (roads.length === 0) return;
+
+  const ctx = document.getElementById('chart-vehicle-density');
+  if (!ctx) return;
+
+  const colors = getChartColors();
+  const sorted = [...roads].sort((a, b) => parseInt(b.vehicle_count || 0) - parseInt(a.vehicle_count || 0));
+
+  destroyChart('vehicle-density');
+  chartInstances['vehicle-density'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: sorted.map(r => r.road_id ? r.road_id.replace('road_', '') : ''),
+      datasets: [{
+        label: 'Số xe',
+        data: sorted.map(r => parseInt(r.vehicle_count || 0)),
+        backgroundColor: colors.palette.map(c => c + '88'),
+        borderColor: colors.palette,
+        borderWidth: 2,
+        borderRadius: 6,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, grid: { color: '#f1f5f9' } },
+        x: { ticks: { font: { size: 9, family: 'JetBrains Mono' } }, grid: { display: false } },
+      },
+    },
+  });
 };
 
-Chart.defaults.color = '#64748b';
-Chart.defaults.borderColor = '#f1f5f9';
-Chart.defaults.font.family = "'Inter', sans-serif";
+window.renderAlertCharts = function () {
+  const roads = DB.state.roads || [];
+  const congested = roads.filter(r => r.status === 'congested');
 
-function mkChart(id, cfg) {
-    if (CHART_INSTANCES[id]) CHART_INSTANCES[id].destroy();
-    const el = document.getElementById(id);
-    if (!el) return;
-    CHART_INSTANCES[id] = new Chart(el, cfg);
-    return CHART_INSTANCES[id];
-}
+  const ctx = document.getElementById('chart-alerts');
+  if (!ctx) return;
 
-const gridLines = () => ({ color: '#f1f5f9', drawBorder: false });
-const legend = () => ({ labels: { color: '#475569', boxWidth: 12, font: { weight: 600 } } });
+  const colors = getChartColors();
 
-// ── DASHBOARD CHARTS ─────────────────────────────────────────────────────────
-async function renderDashboardCharts() {
-    const [flowData, typeData, speedData] = await Promise.all([
-        DB.getFlowStats(),
-        DB.getTypeStats(),
-        DB.getSpeedStats()
-    ]);
+  destroyChart('alerts');
+  chartInstances['alerts'] = new Chart(ctx, {
+    type: 'pie',
+    data: {
+      labels: ['Tắc nghẽn', 'Chậm', 'Bình thường'],
+      datasets: [{
+        data: [
+          congested.length,
+          roads.filter(r => r.status === 'slow').length,
+          roads.filter(r => r.status === 'normal' || !r.status).length,
+        ],
+        backgroundColor: [colors.red, colors.yellow, colors.green],
+        borderWidth: 2,
+        borderColor: '#fff',
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom' } },
+    },
+  });
+};
 
-    // 1. Traffic Flow
-    mkChart('chart-flow', {
-        type: 'line',
-        data: {
-            labels: flowData.map(d => `${d.hour}:00`),
-            datasets: [{
-                label: 'Real Volume',
-                data: flowData.map(d => d.count),
-                borderColor: '#3b82f6',
-                backgroundColor: 'rgba(59,130,246,0.08)',
-                fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2,
-            }]
-        },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: { x: { grid: { display: false } }, y: { grid: gridLines() } }
-        }
-    });
+// === Monitor Charts ===
+window.renderMonitorCharts = function () {
+  const ctx = document.getElementById('chart-latency');
+  if (!ctx) return;
 
-    // 2. Vehicle Distribution
-    mkChart('chart-type-pie', {
-        type: 'doughnut',
-        data: {
-            labels: typeData.map(d => d.vehicle_type),
-            datasets: [{
-                data: typeData.map(d => d.count),
-                backgroundColor: typeData.map(d => TYPE_COLORS[d.vehicle_type] || PALETTE.blue + '0.8)'),
-                borderWidth: 2, borderColor: '#fff',
-            }]
-        },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            plugins: { legend: legend() }, cutout: '70%',
-        }
-    });
+  const colors = getChartColors();
 
-    // 3. Speed Distribution (Fixed ID to match pages.js)
-    const id = document.getElementById('chart-speed-hist') ? 'chart-speed-hist' : 'chart-speed-dist';
-    mkChart(id, {
-        type: 'bar',
-        data: {
-            labels: speedData.map(d => d.bucket),
-            datasets: [{
-                data: speedData.map(d => d.count),
-                backgroundColor: [PALETTE.green + '0.8)', PALETTE.cyan + '0.8)', PALETTE.blue + '0.8)', PALETTE.yellow + '0.8)', PALETTE.red + '0.8)'],
-                borderRadius: 4,
-            }]
-        },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: { x: { grid: { display: false } }, y: { grid: gridLines() } }
-        }
-    });
-}
+  // Simulated latency data
+  const labels = Array.from({ length: 20 }, (_, i) => `${i + 1}s`);
+  const data = Array.from({ length: 20 }, () => Math.random() * 500 + 100);
 
-// ── VEHICLE ANALYTICS PAGE ───────────────────────────────────────────────────
-async function renderVehicleCharts() {
-    // Render the base speed chart
-    await renderDashboardCharts();
-
-    const [weatherData, distData] = await Promise.all([
-        DB.getWeatherStats(),
-        DB.getDistrictStats()
-    ]);
-
-    // 4. District Flow Share
-    mkChart('chart-dist-share', {
-        type: 'polarArea',
-        data: {
-            labels: distData.slice(0, 6).map(d => d.district),
-            datasets: [{
-                data: distData.slice(0, 6).map(d => d.count),
-                backgroundColor: [PALETTE.blue + '0.7)', PALETTE.cyan + '0.7)', PALETTE.purple + '0.7)', PALETTE.green + '0.7)', PALETTE.orange + '0.7)', PALETTE.red + '0.7)']
-            }]
-        },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } }
-    });
-
-    // 5. Weather Impacts
-    mkChart('chart-weather', {
-        type: 'pie',
-        data: {
-            labels: weatherData.map(d => d.weather),
-            datasets: [{
-                data: weatherData.map(d => d.count),
-                backgroundColor: [PALETTE.cyan + '0.8)', PALETTE.blue + '0.8)', PALETTE.yellow + '0.8)', PALETTE.red + '0.8)']
-            }]
-        },
-        options: { responsive: true, maintainAspectRatio: false }
-    });
-
-    // 6. Fuel Overview (Simulated buckets based on summary)
-    mkChart('chart-fuel', {
-        type: 'doughnut',
-        data: {
-            labels: ['Thấp (<15%)', 'Trung bình (15-60%)', 'Cao (>60%)'],
-            datasets: [{
-                data: [DB.summary.alerts, Math.floor(DB.summary.total * 0.35), Math.floor(DB.summary.total * 0.6)],
-                backgroundColor: [PALETTE.red + '0.8)', PALETTE.yellow + '0.8)', PALETTE.green + '0.8)']
-            }]
-        },
-        options: { responsive: true, maintainAspectRatio: false, cutout: '65%' }
-    });
-
-    // 7. Passenger Loading (New missing chart)
-    mkChart('chart-pass-type', {
-        type: 'bar',
-        data: {
-            labels: ['1-2 người', '3-4 người', '5-10 người', '>10 người'],
-            datasets: [{
-                label: 'Số lượng xe',
-                data: [Math.floor(DB.summary.total * 0.4), Math.floor(DB.summary.total * 0.3), Math.floor(DB.summary.total * 0.15), Math.floor(DB.summary.total * 0.15)],
-                backgroundColor: PALETTE.purple + '0.8)',
-                borderRadius: 4
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: { x: { grid: { display: false } }, y: { grid: gridLines() } }
-        }
-    });
-}
-
-async function renderAlertCharts(violations) {
-    const speeding = violations.filter(v => v.speed_kmph > 80).length;
-    const congested = DB.summary.congested;
-
-    mkChart('chart-vio-type', {
-        type: 'doughnut',
-        data: {
-            labels: ['Speeding', 'Congestion'],
-            datasets: [{
-                data: [speeding, congested],
-                backgroundColor: [PALETTE.red + '0.85)', PALETTE.purple + '0.85)'],
-            }]
-        },
-        options: { responsive: true, maintainAspectRatio: false, cutout: '60%' }
-    });
-}
-
-window.renderDashboardCharts = renderDashboardCharts;
-window.renderVehicleCharts = renderVehicleCharts;
-window.renderAlertCharts = renderAlertCharts;
-window.CHART_INSTANCES = CHART_INSTANCES;
+  destroyChart('latency');
+  chartInstances['latency'] = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Latency (ms)',
+        data,
+        borderColor: colors.blue,
+        backgroundColor: colors.blue + '22',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 2,
+        borderWidth: 2,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, grid: { color: '#f1f5f9' } },
+        x: { grid: { display: false } },
+      },
+    },
+  });
+};

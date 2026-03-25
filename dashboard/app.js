@@ -1,13 +1,9 @@
 // ─── APP CONTROLLER ───────────────────────────────────────────────────────────
 let CURRENT_PAGE = 'dashboard';
-let EXPLORER_SORT = { col: 'speed_kmph', dir: -1 };
-let VIOLATIONS_DATA = [];
 
 // ── ROUTER ────────────────────────────────────────────────────────────────────
 async function navigate(page, navEl) {
-  // Avoid full re-render if we are already on this page
   if (page === CURRENT_PAGE && !navEl) {
-    console.log(`♻️ Skipping full re-render for ${page}, updating data instead...`);
     updatePageData(page);
     return;
   }
@@ -19,12 +15,8 @@ async function navigate(page, navEl) {
   if (navEl && navEl.classList) {
     navEl.classList.add('active');
   } else {
-    // Find item with matching onclick or data-page
-    const items = document.querySelectorAll('.nav-item');
-    items.forEach(item => {
-      if (item.getAttribute('onclick')?.includes(`'${page}'`)) {
-        item.classList.add('active');
-      }
+    document.querySelectorAll('.nav-item').forEach(item => {
+      if (item.getAttribute('onclick')?.includes(`'${page}'`)) item.classList.add('active');
     });
   }
 
@@ -33,8 +25,8 @@ async function navigate(page, navEl) {
     dashboard: 'Bảng điều khiển / Tổng quan',
     map: 'Bảng điều khiển / Bản đồ giao thông',
     explorer: 'Quản lý dữ liệu / Tra cứu',
-    vehicle: 'Quản lý dữ liệu / Phân tích',
-    alerts: 'Vận hành / Cảnh báo',
+    vehicle: 'Quản lý dữ liệu / Mật độ xe',
+    alerts: 'Vận hành / Cảnh báo tắc nghẽn',
     monitor: 'Hệ thống / Giám sát',
   };
   const bcSpan = document.querySelector('.breadcrumbs span');
@@ -48,12 +40,14 @@ async function navigate(page, navEl) {
     return;
   }
 
-  console.log(`🚀 Rendering page: ${page}`);
   content.innerHTML = template();
   content.scrollTop = 0;
 
   // Initialize Lucide Icons
   if (window.lucide) lucide.createIcons();
+
+  // Update WS badge
+  updateWSBadge();
 
   // Post-render setup
   switch (page) {
@@ -61,74 +55,176 @@ async function navigate(page, navEl) {
       renderDashboardCharts();
       break;
     case 'map':
-      console.log('🗺️ Map page detected, calling initMap...');
-      setTimeout(() => {
-        if (window.initMap) window.initMap();
-        else console.warn('🗺️ window.initMap not found!');
-      }, 150);
+      setTimeout(() => { if (window.initMap) window.initMap(); }, 150);
       break;
     case 'explorer':
       updateExplorer();
       break;
     case 'vehicle':
       renderVehicleCharts();
+      renderRoadList();
       break;
     case 'alerts':
-      const rows = await DB.query({ limit: 100 });
-      VIOLATIONS_DATA = rows;
-      if (window.renderAlertCharts) renderAlertCharts(VIOLATIONS_DATA);
+      if (window.renderAlertCharts) renderAlertCharts();
       if (window.renderViolations) renderViolations();
       break;
     case 'monitor':
+      updateMonitor();
       if (window.renderMonitorCharts) renderMonitorCharts();
-      if (window.renderSparkJobs) renderSparkJobs();
-      if (window.renderWorkerNodes) renderWorkerNodes();
       break;
   }
 }
 
 // ── EXPLORER ──────────────────────────────────────────────────────────────────
-async function updateExplorer() {
-  const search = document.getElementById('ex-search')?.value || '';
-  const vtype = document.getElementById('ex-vtype')?.value || '';
-  const district = document.getElementById('ex-district')?.value || '';
-  const limit = parseInt(document.getElementById('ex-limit')?.value || 100);
+function updateExplorer() {
+  const search = (document.getElementById('ex-search')?.value || '').toLowerCase();
+  const status = document.getElementById('ex-status')?.value || '';
 
-  let rows = await DB.query({ search, vtype, district, limit });
+  let roads = DB.state.roads || [];
 
-  // Sort
-  rows = rows.slice().sort((a, b) => {
-    const aVal = a[EXPLORER_SORT.col];
-    const bVal = b[EXPLORER_SORT.col];
-    return typeof aVal === 'number' ? (aVal - bVal) * EXPLORER_SORT.dir : (String(aVal).localeCompare(String(bVal))) * EXPLORER_SORT.dir;
-  });
+  // Filter
+  if (search) {
+    roads = roads.filter(r => (r.road_id || '').toLowerCase().includes(search));
+  }
+  if (status) {
+    roads = roads.filter(r => r.status === status);
+  }
 
-  renderExplorerTable(rows);
+  renderExplorerTable(roads);
 }
 
-function renderExplorerTable(rows) {
+function renderExplorerTable(roads) {
   const tbody = document.getElementById('explorer-tbody');
   if (!tbody) return;
-  const fuelColor = f => f < 15 ? 'var(--red)' : f < 40 ? '#d97706' : 'var(--green)';
-  const speedColor = s => s > 80 ? 'var(--red)' : s > 60 ? '#d97706' : 'var(--text)';
 
-  tbody.innerHTML = rows.map(r => `
+  const statusBadge = (s) => {
+    if (s === 'congested') return '<span class="badge red">🔴 Tắc</span>';
+    if (s === 'slow') return '<span class="badge yellow">🟡 Chậm</span>';
+    return '<span class="badge green">🟢 Bình thường</span>';
+  };
+
+  tbody.innerHTML = roads.map(r => `
     <tr>
-      <td class="mono" style="color:var(--accent); font-weight:600">${r.vehicle_id}</td>
-      <td style="font-weight:500">${r.owner_name}</td>
-      <td class="mono" style="font-size:11px; opacity:0.7">${r.license_number}</td>
-      <td><span style="font-weight:700;color:${speedColor(r.speed_kmph)}">${r.speed_kmph}</span> <span style="font-size:11px; color:var(--text3)">km/h</span></td>
-      <td style="color:var(--text2)">${r.street}</td>
-      <td>${r.district}</td>
-      <td><div style="display:flex; align-items:center; gap:8px">
-        <div style="flex:1; height:4px; background:#f1f5f9; border-radius:10px; min-width:40px">
-            <div style="width:${r.fuel_level}%; height:100%; background:${fuelColor(r.fuel_level)}; border-radius:10px"></div>
-        </div>
-        <span style="font-size:12px; font-weight:600; color:${fuelColor(r.fuel_level)}">${r.fuel_level || 0}%</span>
-      </div></td>
-      <td>${r.speed_kmph > 80 ? '<span class="badge red">🏎 Speeding</span>' : r.fuel_level < 15 ? '<span class="badge yellow">⛽ Low Fuel</span>' : '<span class="badge green">✓ Normal</span>'}</td>
+      <td class="mono" style="color:var(--accent); font-weight:600">${r.road_id || ''}</td>
+      <td><span style="font-weight:700;color:${parseFloat(r.avg_speed || 0) < 20 ? 'var(--red)' : parseFloat(r.avg_speed || 0) < 40 ? '#d97706' : 'var(--text)'}">${r.avg_speed || 0}</span> <span style="font-size:11px;color:var(--text3)">km/h</span></td>
+      <td style="font-weight:600">${r.vehicle_count || 0}</td>
+      <td class="mono" style="font-size:11px">${parseFloat(r.lat || 0).toFixed(4)}</td>
+      <td class="mono" style="font-size:11px">${parseFloat(r.lng || 0).toFixed(4)}</td>
+      <td>${statusBadge(r.status)}</td>
+      <td style="font-size:11px;color:var(--text3)">${r.updated_at ? new Date(r.updated_at).toLocaleTimeString() : '-'}</td>
     </tr>
   `).join('');
+}
+
+// ── Road List (Vehicle page) ──
+function renderRoadList() {
+  const container = document.getElementById('road-list');
+  if (!container) return;
+
+  const roads = DB.state.roads || [];
+  const sorted = [...roads].sort((a, b) => parseInt(b.vehicle_count || 0) - parseInt(a.vehicle_count || 0));
+
+  container.innerHTML = `
+    <div class="road-list-grid">
+      ${sorted.slice(0, 12).map(r => {
+        const speed = parseFloat(r.avg_speed || 0);
+        const status = r.status || 'normal';
+        const color = status === 'congested' ? '#ef4444' : status === 'slow' ? '#f59e0b' : '#22c55e';
+        return `
+          <div class="road-card">
+            <div class="road-card-header">
+              <span class="road-card-id">${r.road_id}</span>
+              <span class="road-card-status" style="background:${color}20;color:${color}">${status}</span>
+            </div>
+            <div class="road-card-stats">
+              <div><span class="stat-label">Tốc độ</span><span class="stat-value">${speed} km/h</span></div>
+              <div><span class="stat-label">Xe</span><span class="stat-value">${r.vehicle_count || 0}</span></div>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+// ── Monitor ──
+async function updateMonitor() {
+  const wsEl = document.getElementById('mon-ws');
+  const redisEl = document.getElementById('mon-redis');
+  const roadsEl = document.getElementById('mon-roads');
+  const updateEl = document.getElementById('mon-update');
+
+  if (wsEl) wsEl.textContent = DB.connected ? '🟢 Connected' : '🔴 Disconnected';
+  if (roadsEl) roadsEl.textContent = (DB.state.roads || []).length;
+  if (updateEl) updateEl.textContent = DB.state.lastUpdate ? new Date(DB.state.lastUpdate).toLocaleTimeString() : '-';
+
+  try {
+    const health = await DB.fetchHealth();
+    if (redisEl && health) redisEl.textContent = health.redis?.connected ? '🟢 Connected' : '🔴 Down';
+  } catch (e) {
+    if (redisEl) redisEl.textContent = '❌ Error';
+  }
+}
+
+// ── WS Status Badge ──
+function updateWSBadge() {
+  const badge = document.getElementById('ws-badge');
+  if (!badge) return;
+  if (DB.connected) {
+    badge.textContent = '🟢 Live';
+    badge.className = 'ws-badge connected';
+  } else {
+    badge.textContent = '🔴 Offline';
+    badge.className = 'ws-badge disconnected';
+  }
+}
+
+// ── Real-time Updates ──
+window.addEventListener('traffic-update', () => {
+  updatePageData(CURRENT_PAGE);
+});
+
+window.addEventListener('ws-status', () => {
+  updateWSBadge();
+});
+
+async function updatePageData(page) {
+  const s = DB.summary || {};
+  const fmt = n => Number(n || 0).toLocaleString();
+
+  switch (page) {
+    case 'dashboard':
+      if (document.getElementById('kpi-total')) document.getElementById('kpi-total').textContent = fmt(s.total_roads);
+      if (document.getElementById('kpi-speed')) document.getElementById('kpi-speed').innerHTML = `${s.avg_speed || 0} <span style="font-size:14px;color:var(--text3)">km/h</span>`;
+      if (document.getElementById('kpi-vehicles')) document.getElementById('kpi-vehicles').textContent = fmt(s.total_vehicles);
+      if (document.getElementById('kpi-congested')) document.getElementById('kpi-congested').textContent = fmt(s.congested_roads);
+      renderDashboardCharts();
+      break;
+    case 'map':
+      if (window.renderMapPoints) renderMapPoints();
+      break;
+    case 'explorer':
+      updateExplorer();
+      break;
+    case 'vehicle':
+      renderVehicleCharts();
+      renderRoadList();
+      break;
+    case 'alerts':
+      if (window.renderAlertCharts) renderAlertCharts();
+      if (window.renderViolations) renderViolations();
+      break;
+    case 'monitor':
+      updateMonitor();
+      break;
+  }
+
+  // Update last update timestamp
+  const el = document.getElementById('last-update');
+  if (el && DB.state.lastUpdate) {
+    el.textContent = `Cập nhật: ${new Date(DB.state.lastUpdate).toLocaleTimeString()}`;
+  }
+  updateWSBadge();
 }
 
 // ── BOOT ──────────────────────────────────────────────────────────────────────
@@ -140,13 +236,13 @@ window.addEventListener('DOMContentLoaded', () => {
         <i data-lucide="zap" style="width:28px; height:28px"></i>
       </div>
       <div style="text-align:center">
-        <div style="font-size:24px;font-weight:800; letter-spacing:-0.03em; margin-bottom:4px">Hệ thống Phân tích Giao thông</div>
-        <div style="font-size:14px;color:var(--text3)" id="boot-status">Đang kết nối trung tâm dữ liệu...</div>
+        <div style="font-size:24px;font-weight:800; letter-spacing:-0.03em; margin-bottom:4px">Realtime Traffic Monitor</div>
+        <div style="font-size:14px;color:var(--text3)" id="boot-status">Đang kết nối hệ thống streaming...</div>
       </div>
       <div style="width:280px;background:#f1f5f9;border-radius:99px;height:8px; overflow:hidden">
         <div id="boot-bar" style="height:100%;border-radius:99px;background:var(--accent);width:0;transition:width .4s ease-out"></div>
       </div>
-      <div style="font-size:12px;font-family:var(--mono);color:var(--text3); opacity:0.6" id="boot-rows">Đang khởi tạo công cụ Big Data...</div>
+      <div style="font-size:12px;font-family:var(--mono);color:var(--text3); opacity:0.6" id="boot-rows">Kafka → Redis → WebSocket</div>
     </div>`;
 
   if (window.lucide) lucide.createIcons();
@@ -156,49 +252,13 @@ window.addEventListener('DOMContentLoaded', () => {
       const bar = document.getElementById('boot-bar');
       const info = document.getElementById('boot-rows');
       if (bar) bar.style.width = pct + '%';
-      if (info) info.textContent = `Đang tối ưu hóa dữ liệu: ${pct}%`;
+      if (info) info.textContent = pct < 50 ? 'Connecting to pipeline...' : 'Loading realtime data...';
     },
     () => {
       setTimeout(() => navigate('dashboard'), 300);
     }
   );
 });
-
-// Real-time Event Listener - Smart Refresh
-window.addEventListener('lakehouse-update', () => {
-  console.log('📢 Lakehouse update detected. Updating current page data...');
-  updatePageData(CURRENT_PAGE);
-});
-
-async function updatePageData(page) {
-  switch (page) {
-    case 'dashboard':
-      // Update KPIs in place
-      const s = DB.summary;
-      const fmt = n => Number(n).toLocaleString();
-      if (document.getElementById('kpi-total')) document.getElementById('kpi-total').textContent = fmt(s.total);
-      if (document.getElementById('kpi-speed')) document.getElementById('kpi-speed').innerHTML = `${s.avgSpeed} <span style="font-size:14px;color:var(--text3)">km/h</span>`;
-      if (document.getElementById('kpi-active')) document.getElementById('kpi-active').textContent = fmt(s.active);
-      if (document.getElementById('kpi-alerts')) document.getElementById('kpi-alerts').textContent = fmt(s.alerts);
-      if (document.getElementById('kpi-cong')) document.getElementById('kpi-cong').textContent = fmt(s.congested);
-      // Charts usually need re-render or update
-      renderDashboardCharts();
-      break;
-    case 'map':
-      // Only refresh points, don't re-init map!
-      if (window.renderMapPoints) renderMapPoints();
-      break;
-    case 'explorer':
-      updateExplorer();
-      break;
-    case 'vehicle':
-      renderVehicleCharts();
-      break;
-    case 'alerts':
-      renderViolations();
-      break;
-  }
-}
 
 // Globals
 window.navigate = navigate;

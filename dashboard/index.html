@@ -4,9 +4,9 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Smart Traffic Big Data Analytics | Lakehouse</title>
+    <title>Realtime Traffic Monitor | Streaming Pipeline</title>
     <meta name="description"
-        content="Big Data Lakehouse Dashboard for Smart City Traffic Analytics powered by Spark, Delta Lake and real-time GPS data." />
+        content="Realtime Traffic Monitoring Dashboard — Kafka → Redis → WebSocket pipeline for Ho Chi Minh City traffic analysis." />
 
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -32,10 +32,10 @@
     <!-- SIDEBAR -->
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-brand">
-            <div class="brand-icon"><i data-lucide="zap" stroke-width="3"></i></div>
+            <div class="brand-icon"><i data-lucide="radio" stroke-width="3"></i></div>
             <div>
-                <div class="brand-title">LakeHouse</div>
-                <div class="brand-sub">Big Data Analytics</div>
+                <div class="brand-title">TrafficStream</div>
+                <div class="brand-sub">Realtime Pipeline</div>
             </div>
         </div>
 
@@ -48,30 +48,39 @@
                 <i class="nav-icon" data-lucide="map"></i><span>Bản đồ giao thông</span>
             </a>
 
-            <div class="nav-group-label">Quản lý dữ liệu</div>
+            <div class="nav-group-label">Dữ liệu</div>
             <a href="#" class="nav-item" data-page="explorer" onclick="navigate('explorer',this)">
                 <i class="nav-icon" data-lucide="search"></i><span>Tra cứu dữ liệu</span>
             </a>
             <a href="#" class="nav-item" data-page="vehicle" onclick="navigate('vehicle',this)">
-                <i class="nav-icon" data-lucide="car"></i><span>Phân tích phương tiện</span>
+                <i class="nav-icon" data-lucide="car"></i><span>Mật độ xe</span>
             </a>
 
             <div class="nav-group-label">Vận hành</div>
             <a href="#" class="nav-item" data-page="alerts" onclick="navigate('alerts',this)">
-                <i class="nav-icon" data-lucide="bell"></i><span>Cảnh báo & Vi phạm</span>
-                <span class="nav-badge">47</span>
+                <i class="nav-icon" data-lucide="alert-triangle"></i><span>Cảnh báo tắc nghẽn</span>
+                <span class="nav-badge" id="nav-alert-count">0</span>
             </a>
 
             <div class="nav-group-label">Hệ thống</div>
             <a href="#" class="nav-item" data-page="monitor" onclick="navigate('monitor',this)">
-                <i class="nav-icon" data-lucide="settings"></i><span>Giám sát hệ thống</span>
+                <i class="nav-icon" data-lucide="activity"></i><span>Giám sát Pipeline</span>
             </a>
         </nav>
 
         <div class="sidebar-footer">
-            <a href="#" class="nav-item">
-                <i class="nav-icon" data-lucide="help-circle"></i><span>Trợ giúp</span>
-            </a>
+            <div class="pipeline-status">
+                <div class="pipeline-label">Pipeline Status</div>
+                <div class="pipeline-flow">
+                    <span class="pipe-node kafka">Kafka</span>
+                    <span class="pipe-arrow">→</span>
+                    <span class="pipe-node consumer">Consumer</span>
+                    <span class="pipe-arrow">→</span>
+                    <span class="pipe-node redis">Redis</span>
+                    <span class="pipe-arrow">→</span>
+                    <span class="pipe-node ws">WS</span>
+                </div>
+            </div>
         </div>
     </aside>
 
@@ -85,37 +94,16 @@
                     <i data-lucide="home"></i>
                     <span>Bảng điều khiển / Giao thông</span>
                 </div>
-                <div class="search-bar">
-                    <i data-lucide="search"></i>
-                    <input type="text" placeholder="Tìm kiếm dữ liệu...">
-                </div>
             </div>
             <div class="topbar-right">
                 <div class="topbar-actions">
-                    <button class="action-btn"><i data-lucide="sun"></i></button>
-                    <button class="action-btn badge-notif"><i data-lucide="bell"></i></button>
-                    <button class="action-btn"><i data-lucide="settings"></i></button>
-                </div>
-                <div class="user-profile">
-                    <div class="avatar">HT</div>
-                    <div class="user-info">
-                        <div class="user-name">Hoàng Tuấn</div>
-                        <div class="user-role">Điều hành giao thông</div>
+                    <div class="stream-indicator" id="stream-indicator">
+                        <span class="stream-dot"></span>
+                        <span class="stream-text">Streaming</span>
                     </div>
                 </div>
             </div>
         </header>
-
-        <!-- INGESTION PROGRESS BAR -->
-        <div class="ingest-bar-wrap" id="ingest-bar-wrap" style="display:none">
-            <div class="ingest-bar-inner">
-                <span class="ingest-bar-label">🔥 Spark ingesting: <span id="ingest-pct">0</span>%</span>
-                <div class="ingest-bar-track">
-                    <div class="ingest-bar-fill" id="ingest-bar-fill"></div>
-                </div>
-                <span class="ingest-speed" id="ingest-speed">0 MB/s</span>
-            </div>
-        </div>
 
         <!-- PAGE CONTENT -->
         <main class="content" id="content">

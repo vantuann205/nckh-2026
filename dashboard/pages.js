@@ -1,364 +1,250 @@
-// ─── PAGE HTML TEMPLATES ──────────────────────────────────────────────────────
+/**
+ * Pages Module — HTML templates for each page
+ * Simplified for new traffic data model
+ */
 
-const PAGES = {
+const PAGES = {};
 
-  // ── PAGE 1: DASHBOARD ──────────────────────────────────────────────────────
-  dashboard() {
-    const s = DB.summary;
-    const fmt = n => Number(n).toLocaleString();
-    return `
-<div class="page-enter">
-  <div class="page-header">
-    <div>
-      <div class="page-title">Bảng điều khiển phân tích</div>
-      <div class="page-sub">Giám sát giao thông thời gian thực · Trạng thái hệ thống: Ổn định</div>
+// === DASHBOARD ===
+PAGES.dashboard = () => {
+  const s = DB.summary || {};
+  const fmt = n => Number(n || 0).toLocaleString();
+
+  return `
+    <div class="page-header">
+      <h1>📊 Bảng điều khiển</h1>
+      <div class="header-actions">
+        <span class="ws-badge" id="ws-badge">⏳ Connecting...</span>
+        <span class="last-update" id="last-update"></span>
+      </div>
     </div>
-    <div style="display:flex;gap:12px">
-      <button class="btn btn-ghost" onclick="navigate('explorer')">Tra cứu dữ liệu</button>
-      <button class="btn btn-primary" onclick="navigate('map')">Xem bản đồ</button>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-icon" style="background: linear-gradient(135deg, #3b82f6, #2563eb);">
+          <i data-lucide="map-pin" style="color:#fff"></i>
+        </div>
+        <div class="kpi-content">
+          <div class="kpi-label">Tổng đoạn đường</div>
+          <div class="kpi-value" id="kpi-total">${fmt(s.total_roads)}</div>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon" style="background: linear-gradient(135deg, #22c55e, #16a34a);">
+          <i data-lucide="gauge" style="color:#fff"></i>
+        </div>
+        <div class="kpi-content">
+          <div class="kpi-label">Tốc độ TB</div>
+          <div class="kpi-value" id="kpi-speed">${s.avg_speed || 0} <span style="font-size:14px;color:var(--text3)">km/h</span></div>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon" style="background: linear-gradient(135deg, #f59e0b, #d97706);">
+          <i data-lucide="car" style="color:#fff"></i>
+        </div>
+        <div class="kpi-content">
+          <div class="kpi-label">Tổng phương tiện</div>
+          <div class="kpi-value" id="kpi-vehicles">${fmt(s.total_vehicles)}</div>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon" style="background: linear-gradient(135deg, #ef4444, #dc2626);">
+          <i data-lucide="alert-triangle" style="color:#fff"></i>
+        </div>
+        <div class="kpi-content">
+          <div class="kpi-label">Đoạn tắc nghẽn</div>
+          <div class="kpi-value" id="kpi-congested">${fmt(s.congested_roads)}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="charts-grid">
+      <div class="chart-card">
+        <div class="chart-header">
+          <h3>Phân bổ tốc độ</h3>
+          <span class="chart-badge live">LIVE</span>
+        </div>
+        <div class="chart-body"><canvas id="chart-speed-dist"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header">
+          <h3>Trạng thái giao thông</h3>
+          <span class="chart-badge live">LIVE</span>
+        </div>
+        <div class="chart-body"><canvas id="chart-status"></canvas></div>
+      </div>
+      <div class="chart-card full-width">
+        <div class="chart-header">
+          <h3>Tốc độ theo tuyến đường</h3>
+          <span class="chart-badge live">LIVE</span>
+        </div>
+        <div class="chart-body tall"><canvas id="chart-speed-overview"></canvas></div>
+      </div>
+    </div>
+  `;
+};
+
+// === MAP ===
+PAGES.map = () => `
+  <div class="page-header">
+    <h1>🗺️ Bản đồ giao thông</h1>
+    <div class="header-actions">
+      <span class="ws-badge" id="ws-badge">⏳</span>
+      <div class="map-legend">
+        <span class="legend-item"><span class="legend-dot" style="background:#22c55e"></span> Bình thường</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span> Chậm</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#ef4444"></span> Tắc nghẽn</span>
+      </div>
     </div>
   </div>
+  <div class="map-wrapper">
+    <div id="map-container" style="width:100%; height:600px; border-radius:16px; overflow:hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.08);"></div>
+  </div>
+`;
 
-  <!-- KPI GRID -->
+// === EXPLORER — Road Data ===
+PAGES.explorer = () => `
+  <div class="page-header">
+    <h1>🔍 Tra cứu dữ liệu</h1>
+  </div>
+  <div class="explorer-controls">
+    <input id="ex-search" type="text" placeholder="Tìm road_id..." oninput="updateExplorer()">
+    <select id="ex-status" onchange="updateExplorer()">
+      <option value="">Tất cả trạng thái</option>
+      <option value="normal">Bình thường</option>
+      <option value="slow">Chậm</option>
+      <option value="congested">Tắc nghẽn</option>
+    </select>
+  </div>
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Road ID</th>
+          <th>Tốc độ TB</th>
+          <th>Số xe</th>
+          <th>Vĩ độ</th>
+          <th>Kinh độ</th>
+          <th>Trạng thái</th>
+          <th>Cập nhật</th>
+        </tr>
+      </thead>
+      <tbody id="explorer-tbody"></tbody>
+    </table>
+  </div>
+`;
+
+// === VEHICLE ANALYTICS ===
+PAGES.vehicle = () => `
+  <div class="page-header">
+    <h1>🚗 Phân tích mật độ xe</h1>
+  </div>
+  <div class="charts-grid">
+    <div class="chart-card full-width">
+      <div class="chart-header">
+        <h3>Mật độ xe theo tuyến đường</h3>
+        <span class="chart-badge live">LIVE</span>
+      </div>
+      <div class="chart-body tall"><canvas id="chart-vehicle-density"></canvas></div>
+    </div>
+  </div>
+  <div class="road-list" id="road-list"></div>
+`;
+
+// === ALERTS ===
+PAGES.alerts = () => `
+  <div class="page-header">
+    <h1>🚨 Cảnh báo tắc nghẽn</h1>
+  </div>
+  <div class="charts-grid">
+    <div class="chart-card">
+      <div class="chart-header"><h3>Phân bố trạng thái</h3></div>
+      <div class="chart-body"><canvas id="chart-alerts"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header"><h3>Danh sách tắc nghẽn</h3></div>
+      <div class="chart-body" id="congestion-list" style="overflow-y:auto; padding:16px;"></div>
+    </div>
+  </div>
+`;
+
+// === MONITOR ===
+PAGES.monitor = () => `
+  <div class="page-header">
+    <h1>⚙️ Giám sát hệ thống</h1>
+  </div>
   <div class="kpi-grid">
     <div class="kpi-card">
-      <div class="kpi-icon-row">
-        <div class="kpi-icon-box"><i data-lucide="car"></i></div>
-        <div class="kpi-delta-tag up"><i data-lucide="trending-up"></i> 12.5%</div>
+      <div class="kpi-icon" style="background:linear-gradient(135deg,#22c55e,#16a34a);">
+        <i data-lucide="wifi" style="color:#fff"></i>
       </div>
-      <div class="kpi-label">Phương tiện đã xử lý</div>
-      <div class="kpi-value" id="kpi-total">${fmt(s.total)}</div>
-      <div class="kpi-sub">Tổng số bản ghi trong ngày</div>
+      <div class="kpi-content">
+        <div class="kpi-label">WebSocket</div>
+        <div class="kpi-value" id="mon-ws">-</div>
+      </div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-icon-row">
-        <div class="kpi-icon-box"><i data-lucide="zap"></i></div>
-        <div class="kpi-delta-tag up" style="color:var(--accent)"><i data-lucide="trending-up"></i> 23.1%</div>
+      <div class="kpi-icon" style="background:linear-gradient(135deg,#3b82f6,#2563eb);">
+        <i data-lucide="database" style="color:#fff"></i>
       </div>
-      <div class="kpi-label">Tốc độ trung bình</div>
-      <div class="kpi-value" id="kpi-speed">${s.avgSpeed} <span style="font-size:14px;color:var(--text3)">km/h</span></div>
-      <div class="kpi-sub">Tốc độ TB trên toàn mạng lưới</div>
+      <div class="kpi-content">
+        <div class="kpi-label">Redis</div>
+        <div class="kpi-value" id="mon-redis">-</div>
+      </div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-icon-row">
-        <div class="kpi-icon-box"><i data-lucide="activity"></i></div>
-        <div class="kpi-delta-tag up"><i data-lucide="trending-up"></i> 8.2%</div>
+      <div class="kpi-icon" style="background:linear-gradient(135deg,#8b5cf6,#7c3aed);">
+        <i data-lucide="activity" style="color:#fff"></i>
       </div>
-      <div class="kpi-label">Phương tiện đang hoạt động</div>
-      <div class="kpi-value" id="kpi-active">${fmt(s.active)}</div>
-      <div class="kpi-sub">Số xe đang di chuyển hiện tại</div>
+      <div class="kpi-content">
+        <div class="kpi-label">Tổng đoạn đường</div>
+        <div class="kpi-value" id="mon-roads">-</div>
+      </div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-icon-row">
-        <div class="kpi-icon-box"><i data-lucide="alert-triangle"></i></div>
-        <div class="kpi-delta-tag down"><i data-lucide="trending-down"></i> -2.1%</div>
+      <div class="kpi-icon" style="background:linear-gradient(135deg,#ec4899,#db2777);">
+        <i data-lucide="clock" style="color:#fff"></i>
       </div>
-      <div class="kpi-label">Cảnh báo giao thông</div>
-      <div class="kpi-value" id="kpi-alerts">${fmt(s.alerts)}</div>
-      <div class="kpi-sub">Các vi phạm mức độ cao</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-icon-row">
-        <div class="kpi-icon-box"><i data-lucide="layers"></i></div>
-        <div class="kpi-delta-tag up"><i data-lucide="trending-up"></i> 15.7%</div>
-      </div>
-      <div class="kpi-label">Khu vực ùn tắc</div>
-      <div class="kpi-value" id="kpi-cong">${fmt(s.congested)}</div>
-      <div class="kpi-sub">Các điểm có mật độ xe cao</div>
-    </div>
-  </div>
-
-  <!-- CHARTS ROW 1 -->
-  <div class="grid-31">
-    <div class="card">
-      <div class="card-header">
-        <div><div class="card-title">Hiệu suất lưu lượng</div><div class="card-sub">Lưu lượng xe 24 giờ qua</div></div>
-        <select class="filter-select"><option>12 tháng qua</option></select>
-      </div>
-      <div class="chart-wrap tall"><canvas id="chart-flow"></canvas></div>
-    </div>
-    <div class="card">
-      <div class="card-header">
-        <div><div class="card-title">Cơ cấu phương tiện</div><div class="card-sub">Phân bổ theo loại xe</div></div>
-      </div>
-      <div class="chart-wrap tall"><canvas id="chart-type-pie"></canvas></div>
-    </div>
-  </div>
-
-  <!-- BOTTOM ROW -->
-  <div class="grid-2">
-    <div class="card">
-      <div class="card-header">
-        <div><div class="card-title">Hoạt động hệ thống gần đây</div></div>
-        <button class="btn btn-ghost" onclick="navigate('monitor')">Xem tất cả</button>
-      </div>
-      <div class="activity-list" id="activity-log-summary"></div>
-    </div>
-    <div class="card">
-      <div class="card-header">
-        <div><div class="card-title">Phân bổ tốc độ</div></div>
-        <span class="card-badge">Biểu đồ tần suất</span>
-      </div>
-      <div class="chart-wrap"><canvas id="chart-speed-dist"></canvas></div>
-    </div>
-  </div>
-</div>`;
-  },
-
-  // ── PAGE 2: TRAFFIC MAP ────────────────────────────────────────────────────
-  map() {
-    return `
-<div class="page-enter">
-  <div class="page-header">
-    <div>
-      <div class="page-title">Bản đồ Giao thông</div>
-      <div class="page-sub">Tọa độ thời gian thực · Lớp mật độ giao thông · Hệ thống đang cập nhật</div>
-    </div>
-    <div style="display:flex;gap:12px">
-      <button class="btn btn-ghost" id="map-refresh-btn" onclick="refreshMapPoints()"><i data-lucide="refresh-cw" style="width:14px;height:14px;margin-right:6px"></i> Cập nhật</button>
-      <button class="btn btn-primary" onclick="toggleHeatmap()">Chế độ nhiệt</button>
-    </div>
-  </div>
-
-  <div class="grid-31">
-    <!-- MAP AREA -->
-    <div class="card">
-      <div class="map-controls">
-        <div class="search-bar" style="max-width:300px">
-          <i data-lucide="search"></i>
-          <input type="text" placeholder="Tìm phương tiện..." id="map-search-input">
-        </div>
-        <select class="filter-select" id="map-district" onchange="applyMapFilter()">
-          <option value="">Tất cả Quận/Huyện</option>
-          ${DISTRICTS.map(d => `<option>${d}</option>`).join('')}
-        </select>
-        <div class="map-legend">
-          <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>Dày đặc</div>
-          <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>Trung bình</div>
-          <div class="legend-item"><div class="legend-dot" style="background:#10b981"></div>Thông thoáng</div>
-        </div>
-      </div>
-      <div id="traffic-map"></div>
-    </div>
-
-    <!-- SIDE PANEL -->
-    <div style="display:flex;flex-direction:column;gap:20px">
-      <div class="card">
-        <div class="card-title" style="margin-bottom:14px">Điểm nóng giao thông</div>
-        <div id="hotspot-list"></div>
-      </div>
-      <div class="card">
-        <div class="card-title" style="margin-bottom:14px">Hiệu suất khu vực</div>
-        <div id="speed-meter-list"></div>
+      <div class="kpi-content">
+        <div class="kpi-label">Last Update</div>
+        <div class="kpi-value" id="mon-update" style="font-size:14px">-</div>
       </div>
     </div>
   </div>
-</div>`;
-  },
-
-  // ── PAGE 3: DATA EXPLORER ──────────────────────────────────────────────────
-  explorer() {
-    return `
-<div class="page-enter">
-  <div class="page-header">
-    <div>
-      <div class="page-title">Tra cứu dữ liệu</div>
-      <div class="page-sub">Truy xuất thông tin cho ${Number(DB.totalGenerated).toLocaleString()} phương tiện</div>
-    </div>
-    <div style="display:flex;gap:12px">
-      <button class="btn btn-ghost" onclick="exportCSV()">Tải CSV</button>
-      <button class="btn btn-primary" onclick="updateExplorer()">Áp dụng lọc</button>
+  <div class="charts-grid">
+    <div class="chart-card full-width">
+      <div class="chart-header"><h3>Latency</h3></div>
+      <div class="chart-body"><canvas id="chart-latency"></canvas></div>
     </div>
   </div>
+`;
 
-  <div class="card">
-    <div class="filter-bar">
-      <div class="search-bar" style="flex:1">
-        <i data-lucide="search"></i>
-        <input id="ex-search" placeholder="Tìm mã xe, chủ sở hữu..." oninput="updateExplorer()"/>
-      </div>
-      <select class="filter-select" id="ex-vtype" onchange="updateExplorer()">
-        <option value="">Tất cả loại xe</option>
-        ${V_TYPES.map(v => `<option>${v}</option>`).join('')}
-      </select>
-      <select class="filter-select" id="ex-district" onchange="updateExplorer()">
-        <option value="">Tất cả Quận/Huyện</option>
-        ${DISTRICTS.map(d => `<option>${d}</option>`).join('')}
-      </select>
-      <select class="filter-select" id="ex-limit" onchange="updateExplorer()">
-        <option value="50">50 dòng</option>
-        <option value="100" selected>100 dòng</option>
-        <option value="500">500 dòng</option>
-      </select>
-    </div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th onclick="sortExplorer('vehicle_id')">Mã xe</th>
-            <th onclick="sortExplorer('owner_name')">Chủ sở hữu</th>
-            <th>Biển số</th>
-            <th onclick="sortExplorer('speed_kmph')">Tốc độ</th>
-            <th>Tên đường</th>
-            <th onclick="sortExplorer('district')">Quận/Huyện</th>
-            <th>Nhiên liệu</th>
-            <th>Trạng thái</th>
-          </tr>
-        </thead>
-        <tbody id="explorer-tbody"></tbody>
-      </table>
-    </div>
-  </div>
-</div>`;
-  },
-
-  // ── PAGE 4: VEHICLE ANALYTICS ──────────────────────────────────────────────
-  vehicle() {
-    return `
-<div class="page-enter">
-  <div class="page-header">
-    <div>
-      <div class="page-title">Phân tích phương tiện</div>
-      <div class="page-sub">Phân đoạn phương tiện · Mô hình hóa hành vi · Đánh giá tác động</div>
-    </div>
-  </div>
-
-  <div class="grid-2">
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Phân bổ tốc độ</div>
-        <span class="card-badge blue">Dữ liệu tổng hợp</span>
-      </div>
-      <div class="chart-wrap tall"><canvas id="chart-speed-hist"></canvas></div>
-    </div>
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Giám sát mức nhiên liệu</div>
-        <span class="card-badge yellow">Phân tích hiệu quả</span>
-      </div>
-      <div class="chart-wrap tall"><canvas id="chart-fuel"></canvas></div>
-    </div>
-  </div>
-
-  <div class="grid-3">
-    <div class="card">
-      <div class="card-title" style="margin-bottom:20px">Lượng hành khách</div>
-      <div class="chart-wrap"><canvas id="chart-pass-type"></canvas></div>
-    </div>
-    <div class="card">
-      <div class="card-title" style="margin-bottom:20px">Ảnh hưởng thời tiết</div>
-      <div class="chart-wrap"><canvas id="chart-weather"></canvas></div>
-    </div>
-    <div class="card">
-      <div class="card-title" style="margin-bottom:20px">Lưu lượng theo Quận</div>
-      <div class="chart-wrap"><canvas id="chart-dist-share"></canvas></div>
-    </div>
-  </div>
-</div>`;
-  },
-
-  // ── PAGE 5: ALERTS & VIOLATIONS ────────────────────────────────────────────
-  alerts() {
-    return `
-<div class="page-enter">
-  <div class="page-header">
-    <div>
-      <div class="page-title">Cảnh báo & Vi phạm</div>
-      <div class="page-sub">Tự động phát hiện rủi ro an toàn · Hàng đợi thông báo trực tiếp</div>
-    </div>
-    <div style="display:flex;gap:12px">
-      <button class="btn btn-ghost" onclick="clearAlerts()">Bỏ qua tất cả</button>
-      <button class="btn btn-primary" onclick="exportViolations()">Xuất lưu trữ</button>
-    </div>
-  </div>
-
-  <div class="kpi-grid" style="margin-bottom:24px">
-    <div class="kpi-card">
-      <div class="kpi-icon-row">
-        <div class="kpi-icon-box"><i data-lucide="zap" style="color:var(--red)"></i></div>
-        <div class="kpi-delta-tag down">Nghiêm trọng</div>
-      </div>
-      <div class="kpi-label">Sự kiện quá tốc độ</div>
-      <div class="kpi-value" id="vio-speed-count">0</div>
-      <div class="kpi-sub">Ngưỡng > 80 km/h</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-icon-row">
-        <div class="kpi-icon-box"><i data-lucide="droplet" style="color:var(--yellow)"></i></div>
-        <div class="kpi-delta-tag up">Cảnh báo</div>
-      </div>
-      <div class="kpi-label">Cảnh báo nhiên liệu thấp</div>
-      <div class="kpi-value" id="vio-fuel-count">0</div>
-      <div class="kpi-sub">Mức < 15%</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-icon-row">
-        <div class="kpi-icon-box"><i data-lucide="alert-circle" style="color:var(--purple)"></i></div>
-        <div class="kpi-delta-tag up">Đang xảy ra</div>
-      </div>
-      <div class="kpi-label">Sự cố ùn tắc</div>
-      <div class="kpi-value" id="vio-cong-count">0</div>
-      <div class="kpi-sub">Phát hiện điểm nghẽn</div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title">Luồng hồ sơ vi phạm</div>
-      <select class="filter-select" id="vio-filter-type" onchange="renderViolations()">
-        <option value="">Tất cả mức độ</option>
-        <option>QUÁ_TỐC_ĐỘ</option><option>HẾT_XĂNG</option><option>ÙN_TẮC</option>
-      </select>
-    </div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Phương tiện</th><th>Chủ sở hữu</th><th>Loại vi phạm</th>
-            <th>Thông số</th><th>Vị trí</th><th>Thời gian</th><th>Thao tác</th>
-          </tr>
-        </thead>
-        <tbody id="violations-tbody"></tbody>
-      </table>
-    </div>
-  </div>
-</div>`;
-  },
-
-  // ── PAGE 6: QUERY ENGINE ───────────────────────────────────────────────────
-  // Query Engine section removed as requested for non-admin interface
-  query() {
-    return `<div style="padding:40px; text-align:center; color:var(--text3)">Trang này đã bị gỡ theo yêu cầu người dùng.</div>`;
-  },
-
-  // ── PAGE 7: SYSTEM MONITOR ─────────────────────────────────────────────────
-  monitor() {
-    return `
-<div class="page-enter">
-  <div class="page-header">
-    <div>
-      <div class="page-title">System Monitor</div>
-      <div class="page-sub">Infrastructure health · Node resource management</div>
-    </div>
-    <span class="card-badge green">● Operational</span>
-  </div>
-
-  <div class="grid-2">
-    <div class="card">
-      <div class="card-title" style="margin-bottom:20px">Spark Job Queue</div>
-      <div id="spark-jobs"></div>
-    </div>
-    <div class="card">
-      <div class="card-title" style="margin-bottom:20px">Cluster Resource Usage</div>
-      <div class="chart-wrap"><canvas id="chart-kafka"></canvas></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-title" style="margin-bottom:20px">Worker Health Metadata</div>
-    <div id="worker-nodes"></div>
-  </div>
-</div>`;
-  },
-};
+// Expose globally
 window.PAGES = PAGES;
+
+// === Violations / Congestion Rendering ===
+window.renderViolations = function () {
+  const roads = DB.state.roads || [];
+  const congested = roads.filter(r => r.status === 'congested');
+
+  const list = document.getElementById('congestion-list');
+  if (!list) return;
+
+  if (congested.length === 0) {
+    list.innerHTML = '<div style="text-align:center;color:var(--text3);padding:20px;">✅ Không có tắc nghẽn</div>';
+    return;
+  }
+
+  list.innerHTML = congested.map(r => `
+    <div class="alert-item congested">
+      <div class="alert-icon">🔴</div>
+      <div class="alert-content">
+        <div class="alert-title">${r.road_id}</div>
+        <div class="alert-detail">Tốc độ: ${r.avg_speed} km/h | Xe: ${r.vehicle_count}</div>
+      </div>
+    </div>
+  `).join('');
+};
+
+window.renderSparkJobs = function () {};
+window.renderWorkerNodes = function () {};

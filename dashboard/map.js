@@ -1,120 +1,122 @@
-// ─── LEAFLET MAP (REAL-TIME) ──────────────────────────────────────────────────
-let MAP_INSTANCE = null;
-let MAP_LAYER = null;
-let HEATMAP_ON = false;
+/**
+ * Map Module — Leaflet with real-time traffic coloring
+ * 🟢 Green: speed ≥ 40 (normal)
+ * 🟡 Yellow: 20 ≤ speed < 40 (slow)
+ * 🔴 Red: speed < 20 (congested)
+ */
 
-async function initMap() {
-  console.log('🗺️ initMap() called...');
-  if (MAP_INSTANCE) {
-    console.log('🗺️ Existing instance found, removing...');
-    MAP_INSTANCE.remove(); MAP_INSTANCE = null;
-  }
-  const el = document.getElementById('traffic-map');
-  console.log('🗺️ Map container element:', el);
-  if (!el) {
-    console.warn('🗺️ ERROR: #traffic-map container not found in DOM!');
-    return;
-  }
+let map = null;
+let markersLayer = null;
+const HCMC_CENTER = [10.7769, 106.7009];
 
-  MAP_INSTANCE = L.map('traffic-map', {
-    center: [10.7591, 106.6759], zoom: 13,
-    zoomControl: true, attributionControl: false,
+function getStatusColor(status, speed) {
+  if (status === 'congested' || speed < 20) return '#ef4444'; // red
+  if (status === 'slow' || speed < 40) return '#f59e0b'; // yellow
+  return '#22c55e'; // green
+}
+
+function getStatusLabel(status) {
+  switch (status) {
+    case 'congested': return '🔴 Tắc đường';
+    case 'slow': return '🟡 Chậm';
+    default: return '🟢 Bình thường';
+  }
+}
+
+function createMarkerIcon(color) {
+  return L.divIcon({
+    className: 'traffic-marker',
+    html: `<div style="
+      width: 16px; height: 16px; border-radius: 50%;
+      background: ${color}; border: 2px solid #fff;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      animation: pulse-marker 2s infinite;
+    "></div>`,
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
   });
-  console.log('🗺️ Leaflet instance initialized:', MAP_INSTANCE);
+}
+
+function createPopup(road) {
+  const speed = parseFloat(road.avg_speed || road.speed || 0);
+  const count = parseInt(road.vehicle_count || 0);
+  const status = road.status || 'normal';
+  const color = getStatusColor(status, speed);
+
+  return `
+    <div style="font-family: Inter, sans-serif; min-width: 200px; padding: 4px;">
+      <div style="font-weight: 700; font-size: 14px; margin-bottom: 6px; color: #1e293b;">
+        📍 ${road.road_id}
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px;">
+        <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ${color};"></span>
+        <span style="font-size: 13px; font-weight: 600; color: ${color};">${getStatusLabel(status)}</span>
+      </div>
+      <table style="width: 100%; font-size: 12px; color: #475569;">
+        <tr><td style="padding: 2px 0;">🚗 Tốc độ TB</td><td style="font-weight: 700; text-align: right;">${speed} km/h</td></tr>
+        <tr><td style="padding: 2px 0;">🚙 Số xe</td><td style="font-weight: 700; text-align: right;">${count}</td></tr>
+        <tr><td style="padding: 2px 0;">📌 Tọa độ</td><td style="font-size: 11px; text-align: right;">${parseFloat(road.lat || 0).toFixed(4)}, ${parseFloat(road.lng || 0).toFixed(4)}</td></tr>
+      </table>
+    </div>
+  `;
+}
+
+window.initMap = function () {
+  const container = document.getElementById('map-container');
+  if (!container) { console.warn('Map container not found'); return; }
+
+  // Clear existing map
+  if (map) {
+    map.remove();
+    map = null;
+  }
+
+  map = L.map('map-container', {
+    center: HCMC_CENTER,
+    zoom: 13,
+    zoomControl: true,
+  });
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap',
     maxZoom: 19,
-  }).addTo(MAP_INSTANCE);
-  console.log('🗺️ Tile layer added.');
+  }).addTo(map);
 
-  await renderMapPoints();
-  renderMapCharts();
-  renderSpeedMeters();
-  renderHotspots();
+  markersLayer = L.layerGroup().addTo(map);
 
-  setTimeout(() => {
-    if (MAP_INSTANCE) {
-      console.log('🗺️ invalidatingSize()...');
-      MAP_INSTANCE.invalidateSize();
-    }
-  }, 500);
-}
+  // Render initial data
+  renderMapPoints();
 
-function getMarkerColor(r) {
-  if (r.speed_kmph > 80) return '#ef4444';
-  if (r.congestion === 'High') return '#f59e0b';
-  if (r.speed_kmph === 0) return '#64748b';
-  return '#10b981';
-}
+  // Fix map size after render
+  setTimeout(() => { map.invalidateSize(); }, 200);
+};
 
-async function renderMapPoints(filtered) {
-  if (!MAP_INSTANCE) return;
-  console.log('🗺️ renderMapPoints() called...');
+window.renderMapPoints = function () {
+  if (!map || !markersLayer) return;
 
-  if (!MAP_LAYER) {
-    MAP_LAYER = L.layerGroup().addTo(MAP_INSTANCE);
-  } else {
-    MAP_LAYER.clearLayers();
-  }
+  markersLayer.clearLayers();
 
-  const pts = filtered || await DB.getMapData(2000);
-  console.log(`🗺️ Rendering ${pts.length} points...`);
+  const roads = DB.state.roads || [];
+  if (roads.length === 0) return;
 
-  pts.forEach(r => {
-    if (!r.lat || !r.lng) return;
-    const color = getMarkerColor(r);
-    const marker = L.circleMarker([r.lat, r.lng], {
-      radius: r.vehicle_type === 'Bus' || r.vehicle_type === 'Truck' ? 7 : 5,
-      fillColor: color,
-      color: '#fff',
-      fillOpacity: 0.85,
-      weight: 1.5,
-    });
-    marker.bindPopup(`
-      <div style="font-family:Inter,sans-serif;font-size:13px;min-width:200px">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
-          <b style="color:#3b82f6; font-size:14px">${r.vehicle_id}</b>
-          <span style="font-size:11px; background:#f1f5f9; padding:2px 8px; border-radius:10px">${r.vehicle_type}</span>
-        </div>
-        <hr style="border-color:#f1f5f9;margin:8px 0"/>
-        <div style="margin-bottom:4px">Vận tốc: <b style="color:${color}">${r.speed_kmph} km/h</b></div>
-        <div style="margin-bottom:4px">Khu vực: <b>${r.district || 'N/A'}</b></div>
-        <div>Trạng thái: <b>${r.congestion === 'High' ? 'Kẹt xe' : 'Thông thoáng'}</b></div>
-      </div>
-    `);
-    MAP_LAYER.addLayer(marker);
+  roads.forEach(road => {
+    const lat = parseFloat(road.lat || 0);
+    const lng = parseFloat(road.lng || 0);
+    if (lat === 0 && lng === 0) return;
+
+    const speed = parseFloat(road.avg_speed || road.speed || 0);
+    const status = road.status || 'normal';
+    const color = getStatusColor(status, speed);
+
+    const marker = L.marker([lat, lng], { icon: createMarkerIcon(color) });
+    marker.bindPopup(createPopup(road));
+    markersLayer.addLayer(marker);
   });
-}
+};
 
-function applyMapFilter() {
-  refreshMapPoints();
-}
-
-async function refreshMapPoints() {
-  const btn = document.getElementById('map-refresh-btn');
-  if (btn) { btn.innerHTML = '<i data-lucide="refresh-cw" class="spin"></i> Đang tải...'; btn.disabled = true; }
-
-  await renderMapPoints();
-
-  if (btn) {
-    btn.innerHTML = '<i data-lucide="refresh-cw"></i> Cập nhật';
-    btn.disabled = false;
-    if (window.lucide) lucide.createIcons();
+// Listen for real-time updates
+window.addEventListener('traffic-update', () => {
+  if (map && markersLayer) {
+    renderMapPoints();
   }
-}
-
-function toggleHeatmap() {
-  HEATMAP_ON = !HEATMAP_ON;
-  if (MAP_LAYER) {
-    MAP_LAYER.eachLayer(l => {
-      if (l.setStyle) l.setStyle({ fillOpacity: HEATMAP_ON ? 0.3 : 0.75 });
-    });
-  }
-}
-
-// Export to window
-window.initMap = initMap;
-window.renderMapPoints = renderMapPoints;
-window.refreshMapPoints = refreshMapPoints;
-window.toggleHeatmap = toggleHeatmap;
-window.applyMapFilter = applyMapFilter;
+});

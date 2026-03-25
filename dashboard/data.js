@@ -1,101 +1,173 @@
-// ─── OPTIMIZED DATA API ADAPTER ────────────────────────────────────────────────
-const API_BASE = "http://localhost:8000/api";
+/**
+ * Data Layer — WebSocket client + HTTP fallback
+ * Replaces old HTTP-polling DB object
+ */
 
-export const DISTRICTS = ['Quận 1', 'Quận 3', 'Quận 5', 'Quận 7', 'Quận 10', 'Bình Thạnh', 'Gò Vấp', 'Thủ Đức', 'Tân Bình', 'Tân Phú'];
-export const V_TYPES = ['Motorbike', 'Car', 'Bus', 'Truck', 'Taxi', 'Electric Car'];
+const API_BASE = 'http://localhost:8000';
+const WS_URL = 'ws://localhost:8000/ws';
 
-export const DB = {
-  records: [],
-  summary: { total: 0, active: 0, avgSpeed: 0, alerts: 0, congested: 0 },
-  stats: { flow: [], types: [], speed: [], weather: [], districts: [] },
-  lastSync: null,
-  totalGenerated: 0,
+// === State ===
+const STATE = {
+  roads: [],
+  summary: { total_roads: 0, avg_speed: 0, total_vehicles: 0, congested_roads: 0 },
+  congested: [],
+  connected: false,
+  lastUpdate: null,
+};
 
-  async init(onProgress, onDone) {
-    try {
-      const [status, summary, flow, types, speed, weather, districts] = await Promise.all([
-        fetch(`${API_BASE}/status`).then(r => r.json()),
-        fetch(`${API_BASE}/summary`).then(r => r.json()),
-        fetch(`${API_BASE}/stats/flow`).then(r => r.json()),
-        fetch(`${API_BASE}/stats/types`).then(r => r.json()),
-        fetch(`${API_BASE}/stats/speed`).then(r => r.json()),
-        fetch(`${API_BASE}/stats/weather`).then(r => r.json()),
-        fetch(`${API_BASE}/stats/districts`).then(r => r.json())
-      ]);
+let _ws = null;
+let _reconnectTimer = null;
+let _pollTimer = null;
+const RECONNECT_DELAY = 3000;
+const POLL_INTERVAL = 2000;
 
-      this.lastSync = status.last_refresh;
-      this.summary = summary;
-      this.totalGenerated = summary.total;
-      this.stats.flow = flow;
-      this.stats.types = types;
-      this.stats.speed = speed;
-      this.stats.weather = weather;
-      this.stats.districts = districts;
+// === WebSocket ===
 
-      if (onProgress) onProgress(100, 100);
-      this.startMonitoring();
-      if (onDone) onDone();
-    } catch (e) {
-      console.error("❌ Boot Failure:", e);
-      if (onDone) onDone();
-    }
-  },
+function connectWS() {
+  if (_ws && _ws.readyState <= 1) return; // already connected/connecting
 
-  async startMonitoring() {
-    setInterval(async () => {
+  try {
+    _ws = new WebSocket(WS_URL);
+
+    _ws.onopen = () => {
+      console.log('🟢 WebSocket connected');
+      STATE.connected = true;
+      _dispatchStatus();
+      // Subscribe to all updates
+      _ws.send(JSON.stringify({ subscribe: 'all' }));
+      // Stop HTTP polling
+      if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+      if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+    };
+
+    _ws.onmessage = (event) => {
       try {
-        const status = await fetch(`${API_BASE}/status`).then(r => r.json());
-        if (status.last_refresh !== this.lastSync) {
-          this.lastSync = status.last_refresh;
-          await this.refresh();
-          window.dispatchEvent(new CustomEvent('lakehouse-update'));
-        }
-      } catch (e) { }
-    }, 2000);
+        const msg = JSON.parse(event.data);
+        _handleWSMessage(msg);
+      } catch (e) { console.warn('WS parse error:', e); }
+    };
+
+    _ws.onclose = () => {
+      console.log('🔴 WebSocket disconnected');
+      STATE.connected = false;
+      _dispatchStatus();
+      // Reconnect after delay
+      _reconnectTimer = setTimeout(connectWS, RECONNECT_DELAY);
+      // Start HTTP polling as fallback
+      _startPolling();
+    };
+
+    _ws.onerror = (err) => {
+      console.warn('WS error:', err);
+      _ws.close();
+    };
+  } catch (e) {
+    console.warn('WS connect error:', e);
+    STATE.connected = false;
+    _startPolling();
+  }
+}
+
+function _handleWSMessage(msg) {
+  switch (msg.type) {
+    case 'initial_data':
+    case 'traffic_update':
+      if (msg.roads) STATE.roads = msg.roads;
+      if (msg.summary) STATE.summary = msg.summary;
+      if (msg.congested) STATE.congested = msg.congested;
+      STATE.lastUpdate = msg.timestamp || new Date().toISOString();
+      window.dispatchEvent(new CustomEvent('traffic-update', { detail: STATE }));
+      break;
+    case 'subscribed':
+      console.log(`📡 Subscribed to: ${msg.channel}`);
+      break;
+    case 'pong':
+      break;
+  }
+}
+
+function _dispatchStatus() {
+  window.dispatchEvent(new CustomEvent('ws-status', { detail: { connected: STATE.connected } }));
+}
+
+// === HTTP Polling Fallback ===
+
+function _startPolling() {
+  if (_pollTimer) return;
+  console.log('🔄 Starting HTTP polling fallback...');
+  _pollTimer = setInterval(async () => {
+    if (STATE.connected) return; // WS reconnected, stop polling
+    try {
+      const res = await fetch(`${API_BASE}/traffic/realtime`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.roads) STATE.roads = data.roads;
+        if (data.summary) STATE.summary = data.summary;
+        STATE.lastUpdate = data.timestamp || new Date().toISOString();
+        window.dispatchEvent(new CustomEvent('traffic-update', { detail: STATE }));
+      }
+    } catch (e) { /* silent */ }
+  }, POLL_INTERVAL);
+}
+
+// === HTTP API helpers ===
+
+async function fetchRoad(roadId) {
+  const res = await fetch(`${API_BASE}/traffic/${roadId}`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
+async function fetchCongested() {
+  const res = await fetch(`${API_BASE}/traffic/congested`);
+  if (!res.ok) return { congested: [], count: 0 };
+  return res.json();
+}
+
+async function fetchHealth() {
+  const res = await fetch(`${API_BASE}/health`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
+// === DB-compatible interface (for backward compatibility) ===
+
+window.DB = {
+  state: STATE,
+  get summary() { return STATE.summary; },
+  get roads() { return STATE.roads; },
+  get connected() { return STATE.connected; },
+  fetchRoad,
+  fetchCongested,
+  fetchHealth,
+
+  init(onProgress, onReady) {
+    // Simulate boot progress
+    let pct = 0;
+    const iv = setInterval(() => {
+      pct += 20;
+      if (onProgress) onProgress(Math.min(pct, 100));
+      if (pct >= 100) {
+        clearInterval(iv);
+        connectWS();
+        if (onReady) setTimeout(onReady, 300);
+      }
+    }, 200);
   },
 
-  async refresh() {
-    [this.summary, this.stats.flow, this.stats.types, this.stats.speed, this.stats.weather, this.stats.districts] = await Promise.all([
-      fetch(`${API_BASE}/summary`).then(r => r.json()),
-      fetch(`${API_BASE}/stats/flow`).then(r => r.json()),
-      fetch(`${API_BASE}/stats/types`).then(r => r.json()),
-      fetch(`${API_BASE}/stats/speed`).then(r => r.json()),
-      fetch(`${API_BASE}/stats/weather`).then(r => r.json()),
-      fetch(`${API_BASE}/stats/districts`).then(r => r.json())
-    ]);
-    this.totalGenerated = this.summary.total;
+  async query(params) {
+    // Fallback query via HTTP for explorer
+    const qs = new URLSearchParams(params).toString();
+    try {
+      const res = await fetch(`${API_BASE}/traffic/realtime?${qs}`);
+      if (res.ok) {
+        const data = await res.json();
+        return data.roads || [];
+      }
+    } catch (e) { /* */ }
+    return STATE.roads;
   },
-
-  async query({ search = '', vtype = '', district = '', limit = 100 } = {}) {
-    const url = new URL(`${API_BASE}/explorer`);
-    if (search) url.searchParams.set('search', search);
-    if (vtype) url.searchParams.set('vtype', vtype);
-    if (district) url.searchParams.set('district', district);
-    url.searchParams.set('limit', limit);
-    return await fetch(url).then(r => r.json());
-  },
-
-  async getMapData(limit = 2000) {
-    return await fetch(`${API_BASE}/map?limit=${limit}`).then(r => r.json());
-  },
-
-  async getFlowStats() { return this.stats.flow; },
-  async getTypeStats() { return this.stats.types; },
-  async getSpeedStats() { return this.stats.speed; },
-  async getWeatherStats() { return this.stats.weather; },
-  async getDistrictStats() { return this.stats.districts; }
 };
 
-export const SYS = {
-  sparkWorkers: 12,
-  activeJobs: 3,
-  hdfsUsed: 4.87,
-  hdfsTotal: 10,
-  kafkaThroughput: 48.3,
-  deltaVersion: 'delta-3.1.0',
-  sparkVersion: '3.5.1',
-  queryLatency: 1.2,
-};
-
-window.DB = DB; window.DISTRICTS = DISTRICTS; window.V_TYPES = V_TYPES; window.SYS = SYS;
-window.boot_lakehouse = () => DB.init();
+// Export for module use
+export { STATE, connectWS, fetchRoad, fetchCongested, fetchHealth };
