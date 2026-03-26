@@ -22,6 +22,19 @@ from stream_processing.config import (
 logger = logging.getLogger("RedisClient")
 
 
+def _to_redis_hash(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize mapping values so Redis hash writes never fail on complex types."""
+    normalized: Dict[str, Any] = {}
+    for key, value in data.items():
+        if value is None:
+            normalized[key] = ""
+        elif isinstance(value, (str, int, float, bool)):
+            normalized[key] = value
+        else:
+            normalized[key] = json.dumps(value, ensure_ascii=False)
+    return normalized
+
+
 class TrafficRedisClient:
     """Redis client for traffic data access"""
 
@@ -90,8 +103,30 @@ class TrafficRedisClient:
     def set_road_data(self, road_id: str, data: dict):
         """Set latest data for a road"""
         key = f"road:{road_id}"
-        self.client.hset(key, mapping=data)
+        self.client.hset(key, mapping=_to_redis_hash(data))
         self.client.expire(key, ROAD_DATA_TTL)
+
+    def set_location_state(self, location_key: str, data: dict):
+        """Alias to keep runtime cache keyed by normalized location."""
+        self.set_road_data(location_key, data)
+
+    def set_location_state_batch(self, rows: List[dict]):
+        """Batch set latest data for many locations using one Redis pipeline."""
+        if not rows:
+            return
+        pipe = self.client.pipeline()
+        for row in rows:
+            location_key = str(row.get("location_key") or row.get("road_id") or "").strip()
+            if not location_key:
+                continue
+            key = f"road:{location_key}"
+            pipe.hset(key, mapping=_to_redis_hash(row))
+            pipe.expire(key, ROAD_DATA_TTL)
+        pipe.execute()
+
+    def get_location_state(self, location_key: str) -> Optional[dict]:
+        """Get latest state for a normalized location key."""
+        return self.get_road_data(location_key)
 
     def add_to_window(self, road_id: str, data: dict):
         """Add entry to rolling window"""
@@ -102,9 +137,25 @@ class TrafficRedisClient:
         self.client.zremrangebyscore(window_key, 0, score - ROAD_WINDOW_TTL)
         self.client.expire(window_key, ROAD_WINDOW_TTL)
 
+    def add_to_window_batch(self, rows: List[dict]):
+        """Batch append entries to rolling windows with one pipeline."""
+        if not rows:
+            return
+        score = time.time()
+        pipe = self.client.pipeline()
+        for row in rows:
+            location_key = str(row.get("location_key") or row.get("road_id") or "").strip()
+            if not location_key:
+                continue
+            window_key = f"road:{location_key}:window"
+            pipe.zadd(window_key, {json.dumps(row): score})
+            pipe.zremrangebyscore(window_key, 0, score - ROAD_WINDOW_TTL)
+            pipe.expire(window_key, ROAD_WINDOW_TTL)
+        pipe.execute()
+
     def set_summary(self, summary: dict):
         """Set global summary"""
-        self.client.hset("traffic:summary", mapping=summary)
+        self.client.hset("traffic:summary", mapping=_to_redis_hash(summary))
         self.client.expire("traffic:summary", SUMMARY_TTL)
 
     def set_congested(self, road_ids: List[str]):
@@ -115,6 +166,10 @@ class TrafficRedisClient:
             pipe.sadd("traffic:congested", *road_ids)
         pipe.expire("traffic:congested", CONGESTED_TTL)
         pipe.execute()
+
+    def publish_update(self, payload: dict, channel: str = "traffic-updates"):
+        """Publish update event for websocket relay listeners."""
+        self.client.publish(channel, json.dumps(payload))
 
     # === UTILITY ===
 

@@ -61,6 +61,14 @@
                 <i class="nav-icon" data-lucide="alert-triangle"></i><span>Cảnh báo tắc nghẽn</span>
                 <span class="nav-badge" id="nav-alert-count">0</span>
             </a>
+            <a href="#" class="nav-item" data-page="accidents" onclick="navigate('accidents',this)">
+                <i class="nav-icon" data-lucide="car-crash"></i><span>Tai nạn giao thông</span>
+            </a>
+
+            <div class="nav-group-label">Môi trường</div>
+            <a href="#" class="nav-item" data-page="weather" onclick="navigate('weather',this)">
+                <i class="nav-icon" data-lucide="cloud-sun"></i><span>Thời tiết</span>
+            </a>
 
             <div class="nav-group-label">Hệ thống</div>
             <a href="#" class="nav-item" data-page="monitor" onclick="navigate('monitor',this)">
@@ -72,13 +80,13 @@
             <div class="pipeline-status">
                 <div class="pipeline-label">Pipeline Status</div>
                 <div class="pipeline-flow">
-                    <span class="pipe-node kafka">Kafka</span>
+                    <span class="pipe-node kafka">Producer</span>
                     <span class="pipe-arrow">→</span>
-                    <span class="pipe-node consumer">Consumer</span>
+                    <span class="pipe-node consumer">FastAPI</span>
                     <span class="pipe-arrow">→</span>
                     <span class="pipe-node redis">Redis</span>
                     <span class="pipe-arrow">→</span>
-                    <span class="pipe-node ws">WS</span>
+                    <span class="pipe-node ws">Dashboard</span>
                 </div>
             </div>
         </div>
@@ -105,6 +113,25 @@
             </div>
         </header>
 
+        <!-- LOADING PROGRESS BAR -->
+        <div id="loading-progress-container" class="loading-progress-hidden">
+            <div class="loading-progress-bar">
+                <div class="loading-progress-content">
+                    <div class="loading-progress-left">
+                        <span class="loading-progress-label">Đang tải dữ liệu...</span>
+                        <div class="loading-progress-details">
+                            <span id="loading-vehicles-count">0</span> xe | 
+                            <span id="loading-vehicles-speed">0</span> xe/giây | 
+                            ~<span id="loading-eta">?</span>s còn lại
+                        </div>
+                    </div>
+                    <div class="loading-progress-bar-bg">
+                        <div id="loading-progress-fill" class="loading-progress-fill" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- PAGE CONTENT -->
         <main class="content" id="content">
             <!-- Pages injected by JS -->
@@ -116,6 +143,7 @@
     <script type="module" src="pages.js"></script>
     <script type="module" src="charts.js"></script>
     <script type="module" src="map.js"></script>
+    <script type="module" src="weather-accidents.js"></script>
     <script type="module" src="app.js"></script>
 </body>
 

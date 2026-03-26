@@ -8,3 +8,11 @@ elasticsearch
 pytest
 httpx
 watchdog
+pandas
+numpy
+scikit-learn
+joblib
+pyarrow
+psycopg[binary]
+orjson
+ijson

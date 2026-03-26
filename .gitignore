@@ -51,3 +51,12 @@ lakehouse/
 
 # Data files
 data/*.json
+
+# Generated runtime artifacts
+logs/*.log
+data_loader_state.json
+
+# Processed data artifacts (local only)
+data/processed/*.cache.bin
+data/processed/*.parquet
+data/processed/producer_offset.json

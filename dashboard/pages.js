@@ -56,12 +56,48 @@ PAGES.dashboard = () => {
           <div class="kpi-value" id="kpi-congested">${fmt(s.congested_roads)}</div>
         </div>
       </div>
+      <div class="kpi-card">
+        <div class="kpi-icon" style="background: linear-gradient(135deg, #8b5cf6, #7c3aed);">
+          <i data-lucide="users" style="color:#fff"></i>
+        </div>
+        <div class="kpi-content">
+          <div class="kpi-label">Tổng hành khách</div>
+          <div class="kpi-value" id="kpi-passengers">${fmt(s.total_passengers)}</div>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon" style="background: linear-gradient(135deg, #06b6d4, #0891b2);">
+          <i data-lucide="fuel" style="color:#fff"></i>
+        </div>
+        <div class="kpi-content">
+          <div class="kpi-label">Nhiên liệu TB</div>
+          <div class="kpi-value" id="kpi-fuel">${s.avg_fuel_level || 0} <span style="font-size:14px;color:var(--text3)">%</span></div>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon" style="background: linear-gradient(135deg, #f97316, #ea580c);">
+          <i data-lucide="zap" style="color:#fff"></i>
+        </div>
+        <div class="kpi-content">
+          <div class="kpi-label">Cảnh báo tốc độ</div>
+          <div class="kpi-value" id="kpi-speeding">${fmt(s.speeding_alerts)}</div>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon" style="background: linear-gradient(135deg, #ec4899, #db2777);">
+          <i data-lucide="battery-low" style="color:#fff"></i>
+        </div>
+        <div class="kpi-content">
+          <div class="kpi-label">Cảnh báo nhiên liệu</div>
+          <div class="kpi-value" id="kpi-lowfuel">${fmt(s.low_fuel_alerts)}</div>
+        </div>
+      </div>
     </div>
 
     <div class="charts-grid">
       <div class="chart-card">
         <div class="chart-header">
-          <h3>Phân bổ tốc độ</h3>
+          <h3>Tốc độ theo tuyến đường</h3>
           <span class="chart-badge live">LIVE</span>
         </div>
         <div class="chart-body"><canvas id="chart-speed-dist"></canvas></div>
@@ -73,9 +109,37 @@ PAGES.dashboard = () => {
         </div>
         <div class="chart-body"><canvas id="chart-status"></canvas></div>
       </div>
+      <div class="chart-card">
+        <div class="chart-header">
+          <h3>Loại phương tiện</h3>
+          <span class="chart-badge live">LIVE</span>
+        </div>
+        <div class="chart-body"><canvas id="chart-vehicle-types"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header">
+          <h3>Mức độ tắc nghẽn</h3>
+          <span class="chart-badge live">LIVE</span>
+        </div>
+        <div class="chart-body"><canvas id="chart-congestion-levels"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header">
+          <h3>Thời tiết</h3>
+          <span class="chart-badge live">LIVE</span>
+        </div>
+        <div class="chart-body"><canvas id="chart-weather"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header">
+          <h3>Traffic vs Time</h3>
+          <span class="chart-badge live">API</span>
+        </div>
+        <div class="chart-body"><canvas id="chart-traffic-time"></canvas></div>
+      </div>
       <div class="chart-card full-width">
         <div class="chart-header">
-          <h3>Tốc độ theo tuyến đường</h3>
+          <h3>Tốc độ chi tiết theo tuyến đường</h3>
           <span class="chart-badge live">LIVE</span>
         </div>
         <div class="chart-body tall"><canvas id="chart-speed-overview"></canvas></div>
@@ -221,8 +285,6 @@ PAGES.monitor = () => `
 
 // Expose globally
 window.PAGES = PAGES;
-
-// === Violations / Congestion Rendering ===
 window.renderViolations = function () {
   const roads = DB.state.roads || [];
   const congested = roads.filter(r => r.status === 'congested');
@@ -248,3 +310,85 @@ window.renderViolations = function () {
 
 window.renderSparkJobs = function () {};
 window.renderWorkerNodes = function () {};
+
+// === WEATHER ===
+PAGES.weather = () => `
+  <div class="page-header">
+    <h1>🌤️ Thời tiết TP. Hồ Chí Minh</h1>
+    <div class="header-actions">
+      <span id="weather-location" style="font-size:12px;color:var(--text3);font-family:var(--mono)"></span>
+    </div>
+  </div>
+
+  <div class="kpi-grid" id="weather-kpi"></div>
+
+  <div class="charts-grid">
+    <div class="chart-card full-width">
+      <div class="chart-header"><h3>Nhiệt độ 15 ngày (°C)</h3></div>
+      <div class="chart-body"><canvas id="chart-temp-range"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header"><h3>Độ ẩm & Lượng mưa</h3></div>
+      <div class="chart-body"><canvas id="chart-humidity-precip"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header"><h3>Tốc độ gió (km/h)</h3></div>
+      <div class="chart-body"><canvas id="chart-wind"></canvas></div>
+    </div>
+    <div class="chart-card full-width">
+      <div class="chart-header"><h3>Nhiệt độ theo giờ — Hôm nay</h3></div>
+      <div class="chart-body"><canvas id="chart-hourly-temp"></canvas></div>
+    </div>
+  </div>
+`;
+
+// === ACCIDENTS ===
+PAGES.accidents = () => `
+  <div class="page-header">
+    <h1>🚨 Tai nạn giao thông</h1>
+    <div class="header-actions">
+      <span id="acc-total-badge" style="font-size:12px;background:var(--red);color:#fff;padding:4px 12px;border-radius:99px;font-weight:700"></span>
+    </div>
+  </div>
+
+  <div class="kpi-grid" id="acc-kpi"></div>
+
+  <div class="charts-grid">
+    <div class="chart-card">
+      <div class="chart-header"><h3>Tai nạn theo quận</h3></div>
+      <div class="chart-body tall"><canvas id="chart-acc-district"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header"><h3>Mức độ nghiêm trọng</h3></div>
+      <div class="chart-body"><canvas id="chart-acc-severity"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header"><h3>Phân bố theo giờ trong ngày</h3></div>
+      <div class="chart-body"><canvas id="chart-acc-hour"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header"><h3>Loại phương tiện liên quan</h3></div>
+      <div class="chart-body"><canvas id="chart-acc-vehicles"></canvas></div>
+    </div>
+  </div>
+
+  <div class="table-container" style="margin-top:8px">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+      <span style="font-weight:700;font-size:14px">Danh sách tai nạn</span>
+      <select id="acc-filter-severity" onchange="filterAccidents()" style="padding:6px 12px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:var(--bg2)">
+        <option value="">Tất cả mức độ</option>
+        <option value="5">Nghiêm trọng (5)</option>
+        <option value="4">Nặng (4)</option>
+        <option value="3">Trung bình (3)</option>
+        <option value="2">Nhẹ (2)</option>
+        <option value="1">Rất nhẹ (1)</option>
+      </select>
+    </div>
+    <table>
+      <thead><tr>
+        <th>Đường</th><th>Quận</th><th>Mức độ</th><th>Thời gian</th><th>Tắc nghẽn</th><th>Số xe</th>
+      </tr></thead>
+      <tbody id="acc-tbody"></tbody>
+    </table>
+  </div>
+`;

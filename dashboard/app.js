@@ -27,6 +27,8 @@ async function navigate(page, navEl) {
     explorer: 'Quản lý dữ liệu / Tra cứu',
     vehicle: 'Quản lý dữ liệu / Mật độ xe',
     alerts: 'Vận hành / Cảnh báo tắc nghẽn',
+    accidents: 'Vận hành / Tai nạn giao thông',
+    weather: 'Môi trường / Thời tiết',
     monitor: 'Hệ thống / Giám sát',
   };
   const bcSpan = document.querySelector('.breadcrumbs span');
@@ -67,6 +69,12 @@ async function navigate(page, navEl) {
     case 'alerts':
       if (window.renderAlertCharts) renderAlertCharts();
       if (window.renderViolations) renderViolations();
+      break;
+    case 'accidents':
+      if (window.renderAccidents) renderAccidents();
+      break;
+    case 'weather':
+      if (window.renderWeather) renderWeather();
       break;
     case 'monitor':
       updateMonitor();
@@ -198,6 +206,10 @@ async function updatePageData(page) {
       if (document.getElementById('kpi-speed')) document.getElementById('kpi-speed').innerHTML = `${s.avg_speed || 0} <span style="font-size:14px;color:var(--text3)">km/h</span>`;
       if (document.getElementById('kpi-vehicles')) document.getElementById('kpi-vehicles').textContent = fmt(s.total_vehicles);
       if (document.getElementById('kpi-congested')) document.getElementById('kpi-congested').textContent = fmt(s.congested_roads);
+      if (document.getElementById('kpi-passengers')) document.getElementById('kpi-passengers').textContent = fmt(s.total_passengers);
+      if (document.getElementById('kpi-fuel')) document.getElementById('kpi-fuel').innerHTML = `${s.avg_fuel_level || 0} <span style="font-size:14px;color:var(--text3)">%</span>`;
+      if (document.getElementById('kpi-speeding')) document.getElementById('kpi-speeding').textContent = fmt(s.speeding_alerts);
+      if (document.getElementById('kpi-lowfuel')) document.getElementById('kpi-lowfuel').textContent = fmt(s.low_fuel_alerts);
       renderDashboardCharts();
       break;
     case 'map':
@@ -256,6 +268,38 @@ window.addEventListener('DOMContentLoaded', () => {
     },
     () => {
       setTimeout(() => navigate('dashboard'), 300);
+      
+      // Start loading progress polling
+      DB.startLoadingProgressPolling((progress) => {
+        const container = document.getElementById('loading-progress-container');
+        const fill = document.getElementById('loading-progress-fill');
+        const vehiclesCount = document.getElementById('loading-vehicles-count');
+        const vehiclesSpeed = document.getElementById('loading-vehicles-speed');
+        const eta = document.getElementById('loading-eta');
+        
+        if (!container) return;
+        
+        if (progress.status === 'loading') {
+          // Show loading bar
+          container.classList.remove('loading-progress-hidden');
+          
+          // Update metrics
+          if (vehiclesCount) vehiclesCount.textContent = (progress.total_vehicles || 0).toLocaleString();
+          if (vehiclesSpeed) vehiclesSpeed.textContent = (progress.vehicles_per_sec || 0).toLocaleString();
+          if (eta) eta.textContent = (progress.estimated_remaining_sec || 0);
+          
+          // Calculate and update progress bar
+          if (progress.files && Object.keys(progress.files).length > 0) {
+            const totalToProcess = Object.values(progress.files).reduce((sum, f) => sum + (f.total || 0), 0);
+            const totalProcessed = Object.values(progress.files).reduce((sum, f) => sum + (f.processed || 0), 0);
+            const progressPercent = totalToProcess > 0 ? Math.round((totalProcessed / totalToProcess) * 100) : 0;
+            if (fill) fill.style.width = progressPercent + '%';
+          }
+        } else {
+          // Hide loading bar
+          container.classList.add('loading-progress-hidden');
+        }
+      });
     }
   );
 });

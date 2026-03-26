@@ -11,6 +11,8 @@ const STATE = {
   roads: [],
   summary: { total_roads: 0, avg_speed: 0, total_vehicles: 0, congested_roads: 0 },
   congested: [],
+  analysis: null,
+  predictions: null,
   connected: false,
   lastUpdate: null,
 };
@@ -20,6 +22,11 @@ let _reconnectTimer = null;
 let _pollTimer = null;
 const RECONNECT_DELAY = 3000;
 const POLL_INTERVAL = 2000;
+const ANALYSIS_CACHE_MS = 10000;
+const PREDICT_CACHE_MS = 10000;
+
+let _analysisFetchedAt = 0;
+let _predictFetchedAt = 0;
 
 // === WebSocket ===
 
@@ -130,6 +137,73 @@ async function fetchHealth() {
   return res.json();
 }
 
+async function fetchAnalysis() {
+  const now = Date.now();
+  if (STATE.analysis && (now - _analysisFetchedAt) < ANALYSIS_CACHE_MS) {
+    return STATE.analysis;
+  }
+  const res = await fetch(`${API_BASE}/traffic/analysis`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  STATE.analysis = data;
+  _analysisFetchedAt = now;
+  return data;
+}
+
+async function fetchPredict(minutes = 5) {
+  const now = Date.now();
+  if (STATE.predictions && (now - _predictFetchedAt) < PREDICT_CACHE_MS) {
+    return STATE.predictions;
+  }
+  const res = await fetch(`${API_BASE}/traffic/predict?minutes=${minutes}`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  STATE.predictions = data;
+  _predictFetchedAt = now;
+  return data;
+}
+
+// === Loading Progress ===
+let _loadingProgressCallback = null;
+let _loadingProgressTimer = null;
+
+async function startLoadingProgressPolling(callback) {
+  _loadingProgressCallback = callback;
+  
+  async function poll() {
+    try {
+      const res = await fetch(`${API_BASE}/traffic/loading-progress`);
+      const progress = await res.json();
+      
+      if (_loadingProgressCallback) {
+        _loadingProgressCallback(progress);
+      }
+      
+      // Continue polling if still loading
+      if (progress.status !== 'completed' && progress.status !== 'idle') {
+        _loadingProgressTimer = setTimeout(poll, 500);
+      } else {
+        // Loading complete, stop polling
+        _loadingProgressTimer = null;
+      }
+    } catch (err) {
+      console.error('Error fetching loading progress:', err);
+      _loadingProgressTimer = setTimeout(poll, 1000); // retry after 1s on error
+    }
+  }
+  
+  // Start polling immediately
+  poll();
+}
+
+function stopLoadingProgressPolling() {
+  if (_loadingProgressTimer) {
+    clearTimeout(_loadingProgressTimer);
+    _loadingProgressTimer = null;
+  }
+  _loadingProgressCallback = null;
+}
+
 // === DB-compatible interface (for backward compatibility) ===
 
 window.DB = {
@@ -140,6 +214,10 @@ window.DB = {
   fetchRoad,
   fetchCongested,
   fetchHealth,
+  fetchAnalysis,
+  fetchPredict,
+  startLoadingProgressPolling,
+  stopLoadingProgressPolling,
 
   init(onProgress, onReady) {
     // Simulate boot progress
@@ -170,4 +248,4 @@ window.DB = {
 };
 
 // Export for module use
-export { STATE, connectWS, fetchRoad, fetchCongested, fetchHealth };
+export { STATE, connectWS, fetchRoad, fetchCongested, fetchHealth, fetchAnalysis, fetchPredict };
