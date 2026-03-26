@@ -10,7 +10,15 @@ async function navigate(page, navEl) {
 
   CURRENT_PAGE = page;
 
-  // Update Sidebar Active State
+  // Clear all charts to prevent orphaned Chart.js instances when DOM is replaced
+  if (window.chartInstances && window.destroyChart) {
+    Object.keys(window.chartInstances).forEach(id => window.destroyChart(id));
+  }
+  
+  // Clear animated tracking to replay text animations on page enter
+  window._animatedKPIs = new Map();
+
+  // Update Topbar Active State
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   if (navEl && navEl.classList) {
     navEl.classList.add('active');
@@ -20,41 +28,29 @@ async function navigate(page, navEl) {
     });
   }
 
-  // Update Breadcrumbs
-  const crumbs = {
-    dashboard: 'Bảng điều khiển / Tổng quan',
-    map: 'Bảng điều khiển / Bản đồ giao thông',
-    explorer: 'Quản lý dữ liệu / Tra cứu',
-    vehicle: 'Quản lý dữ liệu / Mật độ xe',
-    alerts: 'Vận hành / Cảnh báo tắc nghẽn',
-    accidents: 'Vận hành / Tai nạn giao thông',
-    weather: 'Môi trường / Thời tiết',
-    monitor: 'Hệ thống / Giám sát',
-  };
-  const bcSpan = document.querySelector('.breadcrumbs span');
-  if (bcSpan) bcSpan.textContent = crumbs[page] || `Bảng điều khiển / ${page}`;
-
   // Inject Template
   const content = document.getElementById('content');
   const template = PAGES[page];
   if (!template) {
-    content.innerHTML = `<div style="padding:40px;color:var(--text2)">Không tìm thấy trang "${page}"</div>`;
+    content.innerHTML = `<div style="padding:40px;color:var(--on-surface-variant); font-family:var(--mono)">[404] Resource not found: "${page}"</div>`;
     return;
   }
 
   content.innerHTML = template();
   content.scrollTop = 0;
 
-  // Initialize Lucide Icons
-  if (window.lucide) lucide.createIcons();
-
-  // Update WS badge
+  // Update WS badge / Header Status
   updateWSBadge();
+
+  // Resize charts to fix the 0px Canvas Bug when switching display:block tabs
+  setTimeout(() => {
+    Object.values(window.chartInstances || {}).forEach(c => { if(c && typeof c.resize === 'function') c.resize()});
+  }, 100);
 
   // Post-render setup
   switch (page) {
     case 'dashboard':
-      renderDashboardCharts();
+      if (window.renderDashboardCharts) renderDashboardCharts();
       break;
     case 'map':
       setTimeout(() => { if (window.initMap) window.initMap(); }, 150);
@@ -63,7 +59,7 @@ async function navigate(page, navEl) {
       updateExplorer();
       break;
     case 'vehicle':
-      renderVehicleCharts();
+      if (window.renderVehicleCharts) renderVehicleCharts();
       renderRoadList();
       break;
     case 'alerts':
@@ -106,20 +102,20 @@ function renderExplorerTable(roads) {
   if (!tbody) return;
 
   const statusBadge = (s) => {
-    if (s === 'congested') return '<span class="badge red">🔴 Tắc</span>';
-    if (s === 'slow') return '<span class="badge yellow">🟡 Chậm</span>';
-    return '<span class="badge green">🟢 Bình thường</span>';
+    if (s === 'congested') return '<span class="badge red">Tắc nghẽn</span>';
+    if (s === 'slow') return '<span class="badge yellow">Chậm</span>';
+    return '<span class="badge green">Bình thường</span>';
   };
 
   tbody.innerHTML = roads.map(r => `
     <tr>
-      <td class="mono" style="color:var(--accent); font-weight:600">${r.road_id || ''}</td>
-      <td><span style="font-weight:700;color:${parseFloat(r.avg_speed || 0) < 20 ? 'var(--red)' : parseFloat(r.avg_speed || 0) < 40 ? '#d97706' : 'var(--text)'}">${r.avg_speed || 0}</span> <span style="font-size:11px;color:var(--text3)">km/h</span></td>
-      <td style="font-weight:600">${r.vehicle_count || 0}</td>
+      <td class="mono" style="color:var(--primary); font-weight:700">${r.road_id || ''}</td>
+      <td><span style="font-weight:800;font-family:var(--font-display);color:${parseFloat(r.avg_speed || 0) < 20 ? 'var(--error)' : parseFloat(r.avg_speed || 0) < 40 ? 'var(--status-congested)' : 'var(--on-surface)'}">${parseFloat(r.avg_speed || 0).toFixed(1)}</span> <span style="font-size:11px;color:var(--on-surface-variant)">km/h</span></td>
+      <td style="font-weight:700">${r.vehicle_count || 0}</td>
       <td class="mono" style="font-size:11px">${parseFloat(r.lat || 0).toFixed(4)}</td>
       <td class="mono" style="font-size:11px">${parseFloat(r.lng || 0).toFixed(4)}</td>
       <td>${statusBadge(r.status)}</td>
-      <td style="font-size:11px;color:var(--text3)">${r.updated_at ? new Date(r.updated_at).toLocaleTimeString() : '-'}</td>
+      <td style="font-size:11px;color:var(--on-surface-variant); font-family:var(--mono)">${r.updated_at ? new Date(r.updated_at).toLocaleTimeString() : '-'}</td>
     </tr>
   `).join('');
 }
@@ -135,14 +131,15 @@ function renderRoadList() {
   container.innerHTML = `
     <div class="road-list-grid">
       ${sorted.slice(0, 12).map(r => {
-        const speed = parseFloat(r.avg_speed || 0);
+        const speed = parseFloat(r.avg_speed || 0).toFixed(1);
         const status = r.status || 'normal';
-        const color = status === 'congested' ? '#ef4444' : status === 'slow' ? '#f59e0b' : '#22c55e';
+        const color = status === 'congested' ? 'var(--error)' : status === 'slow' ? 'var(--status-congested)' : 'var(--tertiary)';
+        const bg = status === 'congested' ? 'var(--error-container)' : status === 'slow' ? 'var(--status-congested-bg)' : 'var(--tertiary-container)';
         return `
           <div class="road-card">
             <div class="road-card-header">
               <span class="road-card-id">${r.road_id}</span>
-              <span class="road-card-status" style="background:${color}20;color:${color}">${status}</span>
+              <span class="road-card-status" style="background:${bg};color:${color}">${status}</span>
             </div>
             <div class="road-card-stats">
               <div><span class="stat-label">Tốc độ</span><span class="stat-value">${speed} km/h</span></div>
@@ -162,30 +159,78 @@ async function updateMonitor() {
   const roadsEl = document.getElementById('mon-roads');
   const updateEl = document.getElementById('mon-update');
 
-  if (wsEl) wsEl.textContent = DB.connected ? '🟢 Connected' : '🔴 Disconnected';
+  if (wsEl) wsEl.innerHTML = DB.connected ? '<span style="color:var(--tertiary)">Live</span>' : '<span style="color:var(--error)">Disconnected</span>';
   if (roadsEl) roadsEl.textContent = (DB.state.roads || []).length;
   if (updateEl) updateEl.textContent = DB.state.lastUpdate ? new Date(DB.state.lastUpdate).toLocaleTimeString() : '-';
 
   try {
     const health = await DB.fetchHealth();
-    if (redisEl && health) redisEl.textContent = health.redis?.connected ? '🟢 Connected' : '🔴 Down';
+    if (redisEl && health) redisEl.innerHTML = health.redis?.connected ? '<span style="color:var(--tertiary)">Live</span>' : '<span style="color:var(--error)">Down</span>';
   } catch (e) {
-    if (redisEl) redisEl.textContent = '❌ Error';
+    if (redisEl) redisEl.innerHTML = '<span style="color:var(--error)">Down</span>';
   }
 }
 
-// ── WS Status Badge ──
+// ── WS Status Badge & Header Config ──
 function updateWSBadge() {
-  const badge = document.getElementById('ws-badge');
+  const badge = document.getElementById('api-status');
   if (!badge) return;
+  const text = badge.querySelector('.status-text');
+  
   if (DB.connected) {
-    badge.textContent = '🟢 Live';
-    badge.className = 'ws-badge connected';
+    badge.className = 'status-indicator live';
+    if (text) text.textContent = 'Live';
   } else {
-    badge.textContent = '🔴 Offline';
-    badge.className = 'ws-badge disconnected';
+    badge.className = 'status-indicator disconnected';
+    if (text) text.textContent = 'Disconnected';
   }
 }
+
+// Global Filter Change
+window.updateFilters = () => {
+  const timeWindow = document.getElementById('time-filter')?.value;
+  console.log('Filters updated:', timeWindow);
+};
+
+// ── KPI Animation Function ──
+window._animatedKPIs = new Map();
+window.animateKPI = function(elId, endVal, suffix = '', isFloat = false) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+
+  const numericEnd = Number(endVal || 0);
+
+  if (window._animatedKPIs.get(elId) === numericEnd) {
+     el.innerHTML = isFloat ? `${numericEnd.toFixed(1)}${suffix ? `<span>${suffix}</span>` : ''}` : `${numericEnd.toLocaleString()}${suffix ? `<span>${suffix}</span>` : ''}`;
+     return;
+  }
+
+  const startVal = window._animatedKPIs.has(elId) ? window._animatedKPIs.get(elId) : 0;
+  window._animatedKPIs.set(elId, numericEnd);
+  
+  const duration = startVal === 0 ? 1200 : 500;
+  let startTimestamp = null;
+  
+  const step = (timestamp) => {
+    if (!startTimestamp) startTimestamp = timestamp;
+    const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+    
+    // easeOutExpo
+    const ease = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
+    const curr = startVal + (numericEnd - startVal) * ease;
+
+    const formattedCurr = isFloat ? curr.toFixed(1) : Math.floor(curr).toLocaleString();
+    el.innerHTML = `${formattedCurr}${suffix ? `<span>${suffix}</span>` : ''}`;
+
+    if (progress < 1) {
+      window.requestAnimationFrame(step);
+    } else {
+      const formattedFinal = isFloat ? numericEnd.toFixed(1) : numericEnd.toLocaleString();
+      el.innerHTML = `${formattedFinal}${suffix ? `<span>${suffix}</span>` : ''}`;
+    }
+  };
+  window.requestAnimationFrame(step);
+};
 
 // ── Real-time Updates ──
 window.addEventListener('traffic-update', () => {
@@ -198,19 +243,30 @@ window.addEventListener('ws-status', () => {
 
 async function updatePageData(page) {
   const s = DB.summary || {};
-  const fmt = n => Number(n || 0).toLocaleString();
+  const hasData = s.total_roads !== undefined && s.total_roads !== null && s.total_roads > 0;
+  
+  if (!hasData) {
+    // Show Skeletons
+    const kpis = ['kpi-total', 'kpi-speed', 'kpi-vehicles', 'kpi-congested', 'kpi-passengers', 'kpi-fuel', 'kpi-speeding', 'kpi-lowfuel'];
+    kpis.forEach(id => {
+      const el = document.getElementById(id);
+      if(el) el.innerHTML = '<div class="skeleton-box kpi-skeleton"><div class="kpi-value"></div></div>';
+    });
+  }
 
   switch (page) {
     case 'dashboard':
-      if (document.getElementById('kpi-total')) document.getElementById('kpi-total').textContent = fmt(s.total_roads);
-      if (document.getElementById('kpi-speed')) document.getElementById('kpi-speed').innerHTML = `${s.avg_speed || 0} <span style="font-size:14px;color:var(--text3)">km/h</span>`;
-      if (document.getElementById('kpi-vehicles')) document.getElementById('kpi-vehicles').textContent = fmt(s.total_vehicles);
-      if (document.getElementById('kpi-congested')) document.getElementById('kpi-congested').textContent = fmt(s.congested_roads);
-      if (document.getElementById('kpi-passengers')) document.getElementById('kpi-passengers').textContent = fmt(s.total_passengers);
-      if (document.getElementById('kpi-fuel')) document.getElementById('kpi-fuel').innerHTML = `${s.avg_fuel_level || 0} <span style="font-size:14px;color:var(--text3)">%</span>`;
-      if (document.getElementById('kpi-speeding')) document.getElementById('kpi-speeding').textContent = fmt(s.speeding_alerts);
-      if (document.getElementById('kpi-lowfuel')) document.getElementById('kpi-lowfuel').textContent = fmt(s.low_fuel_alerts);
-      renderDashboardCharts();
+      if (hasData) {
+        animateKPI('kpi-total', s.total_roads);
+        animateKPI('kpi-speed', s.avg_speed, 'km/h', true);
+        animateKPI('kpi-vehicles', s.total_vehicles);
+        animateKPI('kpi-congested', s.congested_roads);
+        animateKPI('kpi-passengers', s.total_passengers);
+        animateKPI('kpi-fuel', s.avg_fuel_level, '%', true);
+        animateKPI('kpi-speeding', s.speeding_alerts);
+        animateKPI('kpi-lowfuel', s.low_fuel_alerts);
+      }
+      if (window.renderDashboardCharts) renderDashboardCharts();
       break;
     case 'map':
       if (window.renderMapPoints) renderMapPoints();
@@ -219,7 +275,7 @@ async function updatePageData(page) {
       updateExplorer();
       break;
     case 'vehicle':
-      renderVehicleCharts();
+      if (window.renderVehicleCharts) renderVehicleCharts();
       renderRoadList();
       break;
     case 'alerts':
@@ -234,42 +290,48 @@ async function updatePageData(page) {
   // Update last update timestamp
   const el = document.getElementById('last-update');
   if (el && DB.state.lastUpdate) {
-    el.textContent = `Cập nhật: ${new Date(DB.state.lastUpdate).toLocaleTimeString()}`;
+    el.textContent = `LAST PING: ${new Date(DB.state.lastUpdate).toLocaleTimeString()}`;
   }
-  updateWSBadge();
 }
 
 // ── BOOT ──────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
   const content = document.getElementById('content');
   content.innerHTML = `
-    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:24px; color:var(--text)">
-      <div style="width:56px; height:56px; border-radius:16px; background:var(--accent); color:#fff; display:grid; place-items:center; box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.2)">
-        <i data-lucide="zap" style="width:28px; height:28px"></i>
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:24px; color:var(--on-surface)">
+      <div style="width:64px; height:64px; border-radius:16px; background:var(--primary); color:#fff; display:grid; place-items:center; box-shadow: 0 4px 12px rgba(56, 189, 248, 0.4)">
+        <span style="font-size:28px; font-weight:900; font-family:var(--font-display)">T</span>
       </div>
       <div style="text-align:center">
-        <div style="font-size:24px;font-weight:800; letter-spacing:-0.03em; margin-bottom:4px">Realtime Traffic Monitor</div>
-        <div style="font-size:14px;color:var(--text3)" id="boot-status">Đang kết nối hệ thống streaming...</div>
+        <div style="font-size:24px;font-weight:800;font-family:var(--font-display); letter-spacing:-0.03em; margin-bottom:4px">Realtime Traffic Monitor</div>
+        <div style="font-size:14px;color:var(--on-surface-variant); font-family:var(--mono)" id="boot-status">INITIALIZING SYSTEM...</div>
       </div>
-      <div style="width:280px;background:#f1f5f9;border-radius:99px;height:8px; overflow:hidden">
-        <div id="boot-bar" style="height:100%;border-radius:99px;background:var(--accent);width:0;transition:width .4s ease-out"></div>
+      <div style="width:280px;background:var(--surface-container-high);border-radius:99px;height:4px; overflow:hidden">
+        <div id="boot-bar" style="height:100%;border-radius:99px;background:var(--primary);width:0;transition:width .4s ease-out"></div>
       </div>
-      <div style="font-size:12px;font-family:var(--mono);color:var(--text3); opacity:0.6" id="boot-rows">Kafka → Redis → WebSocket</div>
     </div>`;
-
-  if (window.lucide) lucide.createIcons();
 
   DB.init(
     (pct) => {
       const bar = document.getElementById('boot-bar');
-      const info = document.getElementById('boot-rows');
+      const info = document.getElementById('boot-status');
       if (bar) bar.style.width = pct + '%';
-      if (info) info.textContent = pct < 50 ? 'Connecting to pipeline...' : 'Loading realtime data...';
+      if (info) info.textContent = pct < 80 ? 'ESTABLISHING PROTOCOL...' : 'CONNECTING STREAM...';
     },
     () => {
-      setTimeout(() => navigate('dashboard'), 300);
+      setTimeout(() => {
+        navigate('dashboard');
+        
+        // Hide API Status Badge 3 seconds after the Overview page loads for a cleaner demo
+        setTimeout(() => {
+          const badge = document.getElementById('api-status');
+          if (badge) {
+            badge.style.transition = 'opacity 0.6s ease';
+            badge.style.opacity = '0';
+          }
+        }, 3000);
+      }, 300);
       
-      // Start loading progress polling
       DB.startLoadingProgressPolling((progress) => {
         const container = document.getElementById('loading-progress-container');
         const fill = document.getElementById('loading-progress-fill');
@@ -280,15 +342,11 @@ window.addEventListener('DOMContentLoaded', () => {
         if (!container) return;
         
         if (progress.status === 'loading') {
-          // Show loading bar
           container.classList.remove('loading-progress-hidden');
-          
-          // Update metrics
           if (vehiclesCount) vehiclesCount.textContent = (progress.total_vehicles || 0).toLocaleString();
           if (vehiclesSpeed) vehiclesSpeed.textContent = (progress.vehicles_per_sec || 0).toLocaleString();
           if (eta) eta.textContent = (progress.estimated_remaining_sec || 0);
           
-          // Calculate and update progress bar
           if (progress.files && Object.keys(progress.files).length > 0) {
             const totalToProcess = Object.values(progress.files).reduce((sum, f) => sum + (f.total || 0), 0);
             const totalProcessed = Object.values(progress.files).reduce((sum, f) => sum + (f.processed || 0), 0);
@@ -296,7 +354,6 @@ window.addEventListener('DOMContentLoaded', () => {
             if (fill) fill.style.width = progressPercent + '%';
           }
         } else {
-          // Hide loading bar
           container.classList.add('loading-progress-hidden');
         }
       });
@@ -307,4 +364,3 @@ window.addEventListener('DOMContentLoaded', () => {
 // Globals
 window.navigate = navigate;
 window.updateExplorer = updateExplorer;
-window.toggleSidebar = () => document.getElementById('sidebar').classList.toggle('collapsed');
