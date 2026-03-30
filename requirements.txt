@@ -16,3 +16,5 @@ pyarrow
 psycopg[binary]
 orjson
 ijson
+
+xgboost>=2.0.0

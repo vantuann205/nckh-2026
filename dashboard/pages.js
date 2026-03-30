@@ -50,18 +50,37 @@ PAGES.dashboard = () => {
 // === MAP ===
 PAGES.map = () => `
   <div class="page-header">
-    <h1>Bản đồ giao thông</h1>
-    <div class="header-actions">
-      <div class="map-legend">
-        <span class="legend-item"><span class="legend-dot" style="background:var(--green)"></span> Bình thường</span>
-        <span class="legend-item"><span class="legend-dot" style="background:var(--yellow)"></span> Chậm</span>
-        <span class="legend-item"><span class="legend-dot" style="background:var(--red)"></span> Tắc nghẽn</span>
+    <h1>🗺️ Bản đồ giao thông</h1>
+    <div class="header-actions" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <div style="display:flex;gap:6px;align-items:center;font-size:11px">
+        <span style="width:10px;height:10px;border-radius:50%;background:#22c55e;display:inline-block"></span>Low
+        <span style="width:10px;height:10px;border-radius:50%;background:#f59e0b;display:inline-block;margin-left:6px"></span>Medium
+        <span style="width:10px;height:10px;border-radius:50%;background:#ef4444;display:inline-block;margin-left:6px"></span>High
       </div>
     </div>
   </div>
-  <div class="map-wrapper">
-    <div id="map-container" style="width:100%; height:600px; border-radius:16px; overflow:hidden; border:1px solid var(--border)"></div>
+
+  <!-- Stats bar -->
+  <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:8px 14px;display:flex;gap:8px;align-items:center">
+      <span>📍</span><div><div style="font-size:10px;color:var(--text3)">Tổng điểm</div><div style="font-weight:800;font-size:15px" id="map-stat-total">-</div></div>
+    </div>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:8px 14px;display:flex;gap:8px;align-items:center">
+      <span>🔴</span><div><div style="font-size:10px;color:var(--text3)">Tắc cao</div><div style="font-weight:800;font-size:15px;color:#ef4444" id="map-stat-high">-</div></div>
+    </div>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:8px 14px;display:flex;gap:8px;align-items:center">
+      <span>🟡</span><div><div style="font-size:10px;color:var(--text3)">Chậm</div><div style="font-weight:800;font-size:15px;color:#f59e0b" id="map-stat-medium">-</div></div>
+    </div>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:8px 14px;display:flex;gap:8px;align-items:center">
+      <span>🟢</span><div><div style="font-size:10px;color:var(--text3)">Bình thường</div><div style="font-weight:800;font-size:15px;color:#22c55e" id="map-stat-low">-</div></div>
+    </div>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:8px 14px;display:flex;gap:8px;align-items:center">
+      <span>⚡</span><div><div style="font-size:10px;color:var(--text3)">Tốc độ TB</div><div style="font-weight:800;font-size:15px" id="map-stat-speed">-</div></div>
+    </div>
   </div>
+
+  <!-- Map container — full height -->
+  <div id="map-container" style="width:100%;height:calc(100vh - 220px);min-height:500px;border-radius:16px;overflow:hidden;border:1px solid var(--border)"></div>
 `;
 
 // === EXPLORER — Road Data ===

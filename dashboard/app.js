@@ -268,7 +268,6 @@ let _prevConnected = null;
 window.addEventListener('ws-status', (e) => {
   const connected = e.detail?.connected;
   updateWSBadge();
-  updateAllOfflineBanners(connected);
 
   // Khi chuyển từ offline → online: reload lại trang hiện tại để lấy data mới
   if (_prevConnected === false && connected === true) {
@@ -278,50 +277,14 @@ window.addEventListener('ws-status', (e) => {
   _prevConnected = connected;
 });
 
-// ── Offline banner: hiển thị trên mọi trang khi backend offline ──
-function updateAllOfflineBanners(connected) {
-  let banner = document.getElementById('global-offline-banner');
-  if (!connected) {
-    if (!banner) {
-      banner = document.createElement('div');
-      banner.id = 'global-offline-banner';
-      banner.style.cssText = [
-        'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:9999',
-        'background:#ef4444', 'color:#fff', 'text-align:center',
-        'padding:10px 16px', 'font-size:13px', 'font-weight:700',
-        'letter-spacing:0.04em', 'display:flex', 'align-items:center',
-        'justify-content:center', 'gap:10px',
-        'box-shadow:0 2px 12px rgba(239,68,68,0.4)',
-        'animation:slideDown 0.3s ease'
-      ].join(';');
-      banner.innerHTML = `
-        <span style="font-size:16px">🔴</span>
-        <span>BACKEND OFFLINE — Đang chờ kết nối...</span>
-        <span style="opacity:0.7;font-size:11px;font-weight:400">Tự động kết nối lại sau mỗi 3 giây</span>
-        <div style="width:16px;height:16px;border:2px solid rgba(255,255,255,0.4);border-top-color:#fff;border-radius:50%;animation:spin 0.8s linear infinite;margin-left:4px"></div>
-      `;
-      document.body.appendChild(banner);
-    }
-    // Đẩy content xuống để không bị che
-    const wrapper = document.querySelector('.main-wrapper');
-    if (wrapper) wrapper.style.paddingTop = '44px';
-  } else {
-    if (banner) {
-      banner.style.animation = 'slideUp 0.3s ease forwards';
-      setTimeout(() => banner?.remove(), 300);
-    }
-    const wrapper = document.querySelector('.main-wrapper');
-    if (wrapper) wrapper.style.paddingTop = '';
-  }
-}
+
 
 async function updatePageData(page) {
   const s = DB.summary || {};
   const connected = DB.connected;
   const hasData = connected && s.total_roads !== undefined && s.total_roads !== null && s.total_roads > 0;
 
-  // Cập nhật offline banner trên mọi trang
-  updateAllOfflineBanners(connected);
+
 
   if (!hasData) {
     // Show Skeletons trên dashboard
@@ -348,6 +311,22 @@ async function updatePageData(page) {
       break;
     case 'map':
       if (window.renderMapPoints) renderMapPoints();
+      // Cập nhật stats bar
+      if (connected) {
+        const roads = DB.state.roads || [];
+        const high   = roads.filter(r => r.status === 'congested').length;
+        const medium = roads.filter(r => r.status === 'slow').length;
+        const low    = roads.filter(r => r.status === 'normal').length;
+        const avgSpd = roads.length
+          ? (roads.reduce((s, r) => s + parseFloat(r.avg_speed || 0), 0) / roads.length).toFixed(1)
+          : 0;
+        const _s = id => document.getElementById(id);
+        if (_s('map-stat-total'))  _s('map-stat-total').textContent  = roads.length;
+        if (_s('map-stat-high'))   _s('map-stat-high').textContent   = high;
+        if (_s('map-stat-medium')) _s('map-stat-medium').textContent = medium;
+        if (_s('map-stat-low'))    _s('map-stat-low').textContent    = low;
+        if (_s('map-stat-speed'))  _s('map-stat-speed').textContent  = avgSpd + ' km/h';
+      }
       break;
     case 'explorer':
       updateExplorer();

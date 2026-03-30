@@ -20,12 +20,14 @@
         if (theme === "dark" || !theme) document.body.classList.add("dark");
     </script>
 
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+
     <!-- Leaflet Map -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <!-- Leaflet.heat plugin -->
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
 
     <!-- Main CSS -->
     <link rel="stylesheet" href="style.css" />
@@ -121,7 +123,7 @@
     <script type="module" src="data.js"></script>
     <script type="module" src="pages.js"></script>
     <script type="module" src="charts.js"></script>
-    <script type="module" src="map.js"></script>
+    <script src="map.js" defer></script>
     <script type="module" src="weather-accidents.js"></script>
     <script type="module" src="app.js"></script>
 </body>
