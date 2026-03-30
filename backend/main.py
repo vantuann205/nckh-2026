@@ -715,7 +715,7 @@ async def get_analysis():
 
 
 @app.get("/traffic/predict")
-async def get_predict(minutes: int = Query(default=5, ge=5, le=10)):
+async def get_predict(minutes: int = Query(default=5, ge=5, le=60)):
     if not redis_client:
         raise HTTPException(status_code=503, detail="Redis not available")
 
@@ -729,36 +729,102 @@ async def get_predict(minutes: int = Query(default=5, ge=5, le=10)):
 
     feature_rows: List[dict] = []
     for road in roads:
-        feature_rows.append(
-            {
-                "speed_kmph": float(road.get("avg_speed", 0) or 0),
-                "weather_temp_c": float(road.get("weather_temp_c", 0) or 0),
-                "humidity_pct": float(road.get("humidity_pct", 0) or 0),
-                "accident_severity": float(road.get("accident_severity", 0) or 0),
-                "congestion_km": float(road.get("congestion_km", 0) or 0),
-            }
-        )
+        speed = float(road.get("avg_speed", 0) or 0)
+        vehicle_count = int(road.get("vehicle_count", 0) or 0)
+        risk_score = float(road.get("risk_score", 0) or 0)
+        weather_cond = (road.get("weather_condition") or "").lower()
+
+        # Weather severity score
+        weather_severity = 0.0
+        if "storm" in weather_cond or "thunder" in weather_cond:
+            weather_severity = 3.0
+        elif "rain" in weather_cond or "drizzle" in weather_cond:
+            weather_severity = 2.0
+        elif "cloud" in weather_cond or "overcast" in weather_cond:
+            weather_severity = 1.0
+
+        feature_rows.append({
+            "speed_kmph": speed,
+            "weather_temp_c": float(road.get("weather_temp_c", 30) or 30),
+            "humidity_pct": float(road.get("humidity_pct", 70) or 70),
+            "accident_severity": float(road.get("accident_severity", 0) or 0),
+            "congestion_km": float(road.get("congestion_km", 0) or 0),
+            # Extra features for richer prediction
+            "_vehicle_count": vehicle_count,
+            "_risk_score": risk_score,
+            "_weather_severity": weather_severity,
+        })
 
     if model_bundle:
         probs = predict_probability(model_bundle, feature_rows)
     else:
-        probs = [max(0.0, min(1.0, (20 - row["speed_kmph"]) / 20.0)) for row in feature_rows]
+        # Heuristic fallback: multi-factor probability
+        probs = []
+        for row in feature_rows:
+            speed = row["speed_kmph"]
+            risk = row["_risk_score"]
+            weather_sev = row["_weather_severity"]
+            acc = row["accident_severity"]
+
+            # Speed-based base probability (logistic curve)
+            speed_prob = 1 / (1 + (speed / 20) ** 2) if speed > 0 else 0.8
+
+            # Combine factors
+            combined = (
+                speed_prob * 0.50 +
+                min(1.0, risk / 100) * 0.25 +
+                min(1.0, weather_sev / 3) * 0.15 +
+                min(1.0, acc / 5) * 0.10
+            )
+            probs.append(round(min(1.0, max(0.0, combined)), 4))
 
     predictions = []
-    for road, prob in zip(roads, probs):
-        delay_est = max(0.0, (1.0 - min(1.0, float(road.get("avg_speed", 0) or 0) / 60.0)) * minutes * 10)
-        predictions.append(
-            {
-                "road_id": road.get("road_id", ""),
-                "location_key": road.get("location_key", road.get("road_id", "")),
-                "congestion_probability": round(float(prob), 4),
-                "predicted_status": "congested" if float(prob) >= 0.5 else "normal",
-                "predicted_delay_minutes": round(delay_est, 2),
-            }
-        )
+    for road, prob, feat in zip(roads, probs, feature_rows):
+        speed = feat["speed_kmph"]
+        # Delay estimate: more realistic formula
+        if prob >= 0.5:
+            delay_est = round((1.0 - min(1.0, speed / 40.0)) * minutes * 8, 1)
+        else:
+            delay_est = round(prob * minutes * 2, 1)
+
+        # Confidence level
+        if prob >= 0.75:
+            confidence = "Cao"
+        elif prob >= 0.45:
+            confidence = "Trung bình"
+        else:
+            confidence = "Thấp"
+
+        # Recommendation
+        if prob >= 0.75:
+            recommendation = "Chuyển tuyến ngay"
+        elif prob >= 0.5:
+            recommendation = "Giảm tốc độ, chuẩn bị dừng"
+        elif prob >= 0.3:
+            recommendation = "Theo dõi chặt chẽ"
+        else:
+            recommendation = "Lưu thông bình thường"
+
+        predictions.append({
+            "road_id": road.get("road_id", ""),
+            "location_key": road.get("location_key", road.get("road_id", "")),
+            "congestion_probability": round(float(prob), 4),
+            "predicted_status": "congested" if float(prob) >= 0.5 else "normal",
+            "predicted_delay_minutes": delay_est,
+            "confidence": confidence,
+            "recommendation": recommendation,
+            "current_speed": round(feat["speed_kmph"], 1),
+            "risk_score": round(feat["_risk_score"], 1),
+            "weather_condition": road.get("weather_condition", "Unknown"),
+        })
+
+    # Sort by probability descending
+    predictions.sort(key=lambda x: x["congestion_probability"], reverse=True)
 
     return {
         "minutes": minutes,
+        "total_roads": len(predictions),
+        "congested_count": sum(1 for p in predictions if p["predicted_status"] == "congested"),
         "predictions": predictions,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }

@@ -139,19 +139,107 @@ PAGES.monitor = () => `
 `;
 
 // Expose globally
+
+// === DỰ ĐOÁN TẮC ĐƯỜNG ===
+PAGES.prediction = () => `
+  <div class="page-header">
+    <h1>🔮 Dự đoán tắc đường</h1>
+    <div class="header-actions">
+      <select id="pred-horizon" onchange="loadPredictions()" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2);color:var(--text)">
+        <option value="5">5 phút tới</option>
+        <option value="10">10 phút tới</option>
+        <option value="15">15 phút tới</option>
+        <option value="30">30 phút tới</option>
+      </select>
+      <button onclick="loadPredictions()" style="padding:8px 16px;background:var(--primary,#6366f1);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600">🔄 Cập nhật</button>
+    </div>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kpi-card"><div class="kpi-label">🔴 Đường sắp tắc</div><div class="kpi-value" id="pred-kpi-danger">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">📊 Xác suất TB</div><div class="kpi-value" id="pred-kpi-avg-prob">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">⏱️ Trễ TB (phút)</div><div class="kpi-value" id="pred-kpi-avg-delay">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">🟢 Đường an toàn</div><div class="kpi-value" id="pred-kpi-safe">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">⚠️ Rủi ro cao</div><div class="kpi-value" id="pred-kpi-high-risk">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">🕐 Cập nhật</div><div class="kpi-value" id="pred-kpi-time" style="font-size:13px">-</div></div>
+  </div>
+
+  <div class="charts-grid">
+    <div class="chart-card">
+      <div class="chart-header"><h3>📊 Phân bố xác suất tắc đường</h3><span class="chart-badge live">ML</span></div>
+      <div class="chart-body"><canvas id="chart-pred-dist"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header"><h3>⏱️ Thời gian trễ dự kiến (phút)</h3><span class="chart-badge live">ML</span></div>
+      <div class="chart-body"><canvas id="chart-pred-delay"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header"><h3>🔴 Top 10 đường nguy hiểm nhất</h3><span class="chart-badge" style="background:#ef4444;color:#fff">HIGH RISK</span></div>
+      <div class="chart-body tall"><canvas id="chart-pred-top10"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header"><h3>🟢 Top 10 đường thông thoáng nhất</h3><span class="chart-badge" style="background:#22c55e;color:#fff">SAFE</span></div>
+      <div class="chart-body tall"><canvas id="chart-pred-safe10"></canvas></div>
+    </div>
+  </div>
+
+  <div class="charts-grid">
+    <div class="chart-card full-width">
+      <div class="chart-header"><h3>🕐 Dự báo tắc đường theo khung giờ trong ngày</h3><span class="chart-badge live">FORECAST</span></div>
+      <div class="chart-body"><canvas id="chart-pred-hourly"></canvas></div>
+    </div>
+  </div>
+
+  <div class="charts-grid">
+    <div class="chart-card">
+      <div class="chart-header"><h3>🌡️ Ảnh hưởng thời tiết đến tắc đường</h3></div>
+      <div class="chart-body"><canvas id="chart-pred-weather-impact"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header"><h3>🚗 Tốc độ hiện tại vs Xác suất tắc</h3></div>
+      <div class="chart-body"><canvas id="chart-pred-speed-vs-prob"></canvas></div>
+    </div>
+  </div>
+
+  <div class="table-container" style="margin-top:8px">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+      <span style="font-weight:700;font-size:14px">📋 Chi tiết dự đoán tất cả tuyến đường</span>
+      <input id="pred-search" type="text" placeholder="Tìm road_id..." oninput="filterPredTable()"
+        style="padding:6px 12px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:var(--bg2);color:var(--text);flex:1;max-width:240px">
+      <select id="pred-filter-status" onchange="filterPredTable()"
+        style="padding:6px 12px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:var(--bg2);color:var(--text)">
+        <option value="">Tất cả</option>
+        <option value="congested">Sắp tắc</option>
+        <option value="normal">Bình thường</option>
+      </select>
+      <select id="pred-sort" onchange="filterPredTable()"
+        style="padding:6px 12px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:var(--bg2);color:var(--text)">
+        <option value="prob_desc">Xác suất cao nhất</option>
+        <option value="prob_asc">Xác suất thấp nhất</option>
+        <option value="delay_desc">Trễ nhiều nhất</option>
+      </select>
+    </div>
+    <table>
+      <thead><tr>
+        <th>Tuyến đường</th><th>Tốc độ hiện tại</th><th>Xác suất tắc</th>
+        <th>Trạng thái dự đoán</th><th>Trễ dự kiến</th><th>Mức rủi ro</th><th>Khuyến nghị</th>
+      </tr></thead>
+      <tbody id="pred-tbody"></tbody>
+    </table>
+  </div>
+`;
+
+// Expose globally
 window.PAGES = PAGES;
 window.renderViolations = function () {
   const roads = DB.state.roads || [];
   const congested = roads.filter(r => r.status === 'congested');
-
   const list = document.getElementById('congestion-list');
   if (!list) return;
-
   if (congested.length === 0) {
     list.innerHTML = '<div class="empty-state">✅ Không có tắc nghẽn</div>';
     return;
   }
-
   list.innerHTML = congested.map(r => `
     <div class="alert-item congested">
       <div class="alert-content">
@@ -161,74 +249,5 @@ window.renderViolations = function () {
     </div>
   `).join('');
 };
-
 window.renderSparkJobs = function () {};
 window.renderWorkerNodes = function () {};
-
-// === WEATHER ===
-PAGES.weather = () => `
-  <div class="page-header">
-    <h1>Thời tiết TP. Hồ Chí Minh</h1>
-    <div class="header-actions">
-      <span id="weather-location" style="font-size:12px;color:var(--text3);font-family:var(--mono)"></span>
-    </div>
-  </div>
-  <div class="kpi-grid" id="weather-kpi"></div>
-  <div class="charts-grid">
-    <div class="chart-card full-width"><div class="chart-header"><h3>Nhiệt độ 15 ngày (°C)</h3></div><div class="chart-body"><canvas id="chart-temp-range"></canvas></div></div>
-    <div class="chart-card"><div class="chart-header"><h3>Độ ẩm & Lượng mưa</h3></div><div class="chart-body"><canvas id="chart-humidity-precip"></canvas></div></div>
-    <div class="chart-card"><div class="chart-header"><h3>Tốc độ gió (km/h)</h3></div><div class="chart-body"><canvas id="chart-wind"></canvas></div></div>
-    <div class="chart-card full-width"><div class="chart-header"><h3>Nhiệt độ theo giờ — Hôm nay</h3></div><div class="chart-body"><canvas id="chart-hourly-temp"></canvas></div></div>
-  </div>
-`;
-
-// === ACCIDENTS ===
-PAGES.accidents = () => `
-  <div class="page-header">
-    <h1>Tai nạn giao thông</h1>
-    <div class="header-actions">
-      <span id="acc-total-badge" style="font-size:12px;background:var(--red);color:#fff;padding:4px 12px;border-radius:99px;font-weight:700"></span>
-    </div>
-  </div>
-
-  <div class="kpi-grid" id="acc-kpi"></div>
-
-  <div class="charts-grid">
-    <div class="chart-card">
-      <div class="chart-header"><h3>Tai nạn theo quận</h3></div>
-      <div class="chart-body tall"><canvas id="chart-acc-district"></canvas></div>
-    </div>
-    <div class="chart-card">
-      <div class="chart-header"><h3>Mức độ nghiêm trọng</h3></div>
-      <div class="chart-body"><canvas id="chart-acc-severity"></canvas></div>
-    </div>
-    <div class="chart-card">
-      <div class="chart-header"><h3>Phân bố theo giờ trong ngày</h3></div>
-      <div class="chart-body"><canvas id="chart-acc-hour"></canvas></div>
-    </div>
-    <div class="chart-card">
-      <div class="chart-header"><h3>Loại phương tiện liên quan</h3></div>
-      <div class="chart-body"><canvas id="chart-acc-vehicles"></canvas></div>
-    </div>
-  </div>
-
-  <div class="table-container" style="margin-top:8px">
-    <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;gap:12px;flex-wrap:wrap;align-items:center">
-      <span style="font-weight:700;font-size:14px">Danh sách tai nạn</span>
-      <select id="acc-filter-severity" onchange="filterAccidents()" style="padding:6px 12px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:var(--bg2);color:var(--text)">
-        <option value="">Tất cả mức độ</option>
-        <option value="5">Nghiêm trọng (5)</option>
-        <option value="4">Nặng (4)</option>
-        <option value="3">Trung bình (3)</option>
-        <option value="2">Nhẹ (2)</option>
-        <option value="1">Rất nhẹ (1)</option>
-      </select>
-    </div>
-    <table>
-      <thead><tr>
-        <th>Đường</th><th>Quận</th><th>Mức độ</th><th>Thời gian</th><th>Tắc nghẽn</th><th>Số xe</th>
-      </tr></thead>
-      <tbody id="acc-tbody"></tbody>
-    </table>
-  </div>
-`;

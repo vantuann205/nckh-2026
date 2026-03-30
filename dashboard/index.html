@@ -29,6 +29,13 @@
 
     <!-- Main CSS -->
     <link rel="stylesheet" href="style.css" />
+    <!-- Prediction Module -->
+    <script src="prediction.js" defer></script>
+    <style>
+      @keyframes slideDown { from { transform: translateY(-100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+      @keyframes slideUp   { from { transform: translateY(0);    opacity: 1; } to { transform: translateY(-100%); opacity: 0; } }
+      @keyframes spin      { to { transform: rotate(360deg); } }
+    </style>
 </head>
 
 <body>
@@ -63,6 +70,7 @@
                 </a>
                 <a href="#" class="nav-item" data-page="accidents" onclick="navigate('accidents',this)">Tai nạn</a>
                 <a href="#" class="nav-item" data-page="weather" onclick="navigate('weather',this)">Thời tiết</a>
+                <a href="#" class="nav-item" data-page="prediction" onclick="navigate('prediction',this)">🔮 Dự đoán</a>
                 <a href="#" class="nav-item" data-page="monitor" onclick="navigate('monitor',this)">Giám sát</a>
             </nav>
 

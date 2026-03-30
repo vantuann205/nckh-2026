@@ -76,6 +76,9 @@ async function navigate(page, navEl) {
       updateMonitor();
       if (window.renderMonitorCharts) renderMonitorCharts();
       break;
+    case 'prediction':
+      setTimeout(() => { if (window._initPredictionPage) window._initPredictionPage(); }, 100);
+      break;
   }
 }
 
@@ -237,16 +240,68 @@ window.addEventListener('traffic-update', () => {
   updatePageData(CURRENT_PAGE);
 });
 
-window.addEventListener('ws-status', () => {
+// ── Connection status change → refresh toàn bộ trang hiện tại ──
+let _prevConnected = null;
+window.addEventListener('ws-status', (e) => {
+  const connected = e.detail?.connected;
   updateWSBadge();
+  updateAllOfflineBanners(connected);
+
+  // Khi chuyển từ offline → online: reload lại trang hiện tại để lấy data mới
+  if (_prevConnected === false && connected === true) {
+    console.log('🟢 Backend online — refreshing current page:', CURRENT_PAGE);
+    setTimeout(() => updatePageData(CURRENT_PAGE), 500);
+  }
+  _prevConnected = connected;
 });
+
+// ── Offline banner: hiển thị trên mọi trang khi backend offline ──
+function updateAllOfflineBanners(connected) {
+  let banner = document.getElementById('global-offline-banner');
+  if (!connected) {
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'global-offline-banner';
+      banner.style.cssText = [
+        'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:9999',
+        'background:#ef4444', 'color:#fff', 'text-align:center',
+        'padding:10px 16px', 'font-size:13px', 'font-weight:700',
+        'letter-spacing:0.04em', 'display:flex', 'align-items:center',
+        'justify-content:center', 'gap:10px',
+        'box-shadow:0 2px 12px rgba(239,68,68,0.4)',
+        'animation:slideDown 0.3s ease'
+      ].join(';');
+      banner.innerHTML = `
+        <span style="font-size:16px">🔴</span>
+        <span>BACKEND OFFLINE — Đang chờ kết nối...</span>
+        <span style="opacity:0.7;font-size:11px;font-weight:400">Tự động kết nối lại sau mỗi 3 giây</span>
+        <div style="width:16px;height:16px;border:2px solid rgba(255,255,255,0.4);border-top-color:#fff;border-radius:50%;animation:spin 0.8s linear infinite;margin-left:4px"></div>
+      `;
+      document.body.appendChild(banner);
+    }
+    // Đẩy content xuống để không bị che
+    const wrapper = document.querySelector('.main-wrapper');
+    if (wrapper) wrapper.style.paddingTop = '44px';
+  } else {
+    if (banner) {
+      banner.style.animation = 'slideUp 0.3s ease forwards';
+      setTimeout(() => banner?.remove(), 300);
+    }
+    const wrapper = document.querySelector('.main-wrapper');
+    if (wrapper) wrapper.style.paddingTop = '';
+  }
+}
 
 async function updatePageData(page) {
   const s = DB.summary || {};
-  const hasData = s.total_roads !== undefined && s.total_roads !== null && s.total_roads > 0;
-  
+  const connected = DB.connected;
+  const hasData = connected && s.total_roads !== undefined && s.total_roads !== null && s.total_roads > 0;
+
+  // Cập nhật offline banner trên mọi trang
+  updateAllOfflineBanners(connected);
+
   if (!hasData) {
-    // Show Skeletons
+    // Show Skeletons trên dashboard
     const kpis = ['kpi-total', 'kpi-speed', 'kpi-vehicles', 'kpi-congested', 'kpi-passengers', 'kpi-fuel', 'kpi-speeding', 'kpi-lowfuel'];
     kpis.forEach(id => {
       const el = document.getElementById(id);
@@ -282,8 +337,18 @@ async function updatePageData(page) {
       if (window.renderAlertCharts) renderAlertCharts();
       if (window.renderViolations) renderViolations();
       break;
+    case 'accidents':
+      if (window.renderAccidents) renderAccidents();
+      break;
+    case 'weather':
+      if (window.renderWeather) renderWeather();
+      break;
     case 'monitor':
       updateMonitor();
+      if (window.renderMonitorCharts) renderMonitorCharts();
+      break;
+    case 'prediction':
+      if (connected && window._initPredictionPage) window._initPredictionPage();
       break;
   }
 
