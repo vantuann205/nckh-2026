@@ -215,6 +215,8 @@ h1, h2, h3, .display-text { font-family: var(--font-display); font-weight: 800; 
   background: var(--surface-container-highest); color: var(--on-surface-variant);
 }
 .chart-badge.live { background: var(--tertiary-container); color: var(--tertiary); }
+.chart-badge.offline { background: var(--error-container); color: var(--error); animation: blink 1.5s infinite; }
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 .chart-body { padding: 16px 24px 24px; height: 320px; position: relative; }
 .chart-body.tall { height: 440px; }
 

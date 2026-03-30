@@ -39,8 +39,9 @@ async function navigate(page, navEl) {
   content.innerHTML = template();
   content.scrollTop = 0;
 
-  // Update WS badge / Header Status
+  // Update WS badge / Header Status / Chart Badges
   updateWSBadge();
+  updateStatusBadges();
 
   // Resize charts to fix the 0px Canvas Bug when switching display:block tabs
   setTimeout(() => {
@@ -187,6 +188,28 @@ function updateWSBadge() {
     badge.className = 'status-indicator disconnected';
     if (text) text.textContent = 'Disconnected';
   }
+  updateStatusBadges();
+}
+
+// ── Update ALL Chart Badges (LIVE/OFFLINE) ──
+function updateStatusBadges() {
+  const badges = document.querySelectorAll('.status-sync');
+  const connected = DB.connected;
+  badges.forEach(b => {
+    // Preserve the original mode (ML, API, etc) if it's not the default LIVE
+    const mode = b.getAttribute('data-mode') || b.textContent;
+    if (!b.getAttribute('data-mode')) b.setAttribute('data-mode', mode);
+
+    if (connected) {
+      b.textContent = mode;
+      b.classList.remove('offline');
+      b.classList.add('live');
+    } else {
+      b.textContent = 'OFFLINE';
+      b.classList.remove('live');
+      b.classList.add('offline');
+    }
+  });
 }
 
 // Global Filter Change

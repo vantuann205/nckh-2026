@@ -36,13 +36,13 @@ PAGES.dashboard = () => {
     </div>
 
     <div class="charts-grid">
-      <div class="chart-card"><div class="chart-header"><h3>Tốc độ theo tuyến đường</h3><span class="chart-badge live">LIVE</span></div><div class="chart-body"><canvas id="chart-speed-dist"></canvas></div></div>
-      <div class="chart-card"><div class="chart-header"><h3>Trạng thái giao thông</h3><span class="chart-badge live">LIVE</span></div><div class="chart-body"><canvas id="chart-status"></canvas></div></div>
-      <div class="chart-card"><div class="chart-header"><h3>Loại phương tiện</h3><span class="chart-badge live">LIVE</span></div><div class="chart-body"><canvas id="chart-vehicle-types"></canvas></div></div>
-      <div class="chart-card"><div class="chart-header"><h3>Mức độ tắc nghẽn</h3><span class="chart-badge live">LIVE</span></div><div class="chart-body"><canvas id="chart-congestion-levels"></canvas></div></div>
-      <div class="chart-card"><div class="chart-header"><h3>Thời tiết</h3><span class="chart-badge live">LIVE</span></div><div class="chart-body"><canvas id="chart-weather"></canvas></div></div>
-      <div class="chart-card"><div class="chart-header"><h3>Traffic vs Time</h3><span class="chart-badge live">API</span></div><div class="chart-body"><canvas id="chart-traffic-time"></canvas></div></div>
-      <div class="chart-card full-width"><div class="chart-header"><h3>Tốc độ chi tiết theo tuyến đường</h3><span class="chart-badge live">LIVE</span></div><div class="chart-body tall"><canvas id="chart-speed-overview"></canvas></div></div>
+      <div class="chart-card"><div class="chart-header"><h3>Tốc độ theo tuyến đường</h3><span class="chart-badge status-sync">LIVE</span></div><div class="chart-body"><canvas id="chart-speed-dist"></canvas></div></div>
+      <div class="chart-card"><div class="chart-header"><h3>Trạng thái giao thông</h3><span class="chart-badge status-sync">LIVE</span></div><div class="chart-body"><canvas id="chart-status"></canvas></div></div>
+      <div class="chart-card"><div class="chart-header"><h3>Loại phương tiện</h3><span class="chart-badge status-sync">LIVE</span></div><div class="chart-body"><canvas id="chart-vehicle-types"></canvas></div></div>
+      <div class="chart-card"><div class="chart-header"><h3>Mức độ tắc nghẽn</h3><span class="chart-badge status-sync">LIVE</span></div><div class="chart-body"><canvas id="chart-congestion-levels"></canvas></div></div>
+      <div class="chart-card"><div class="chart-header"><h3>Thời tiết</h3><span class="chart-badge status-sync">LIVE</span></div><div class="chart-body"><canvas id="chart-weather"></canvas></div></div>
+      <div class="chart-card"><div class="chart-header"><h3>Traffic vs Time</h3><span class="chart-badge status-sync">API</span></div><div class="chart-body"><canvas id="chart-traffic-time"></canvas></div></div>
+      <div class="chart-card full-width"><div class="chart-header"><h3>Tốc độ chi tiết theo tuyến đường</h3><span class="chart-badge status-sync">LIVE</span></div><div class="chart-body tall"><canvas id="chart-speed-overview"></canvas></div></div>
     </div>
   `;
 };
@@ -93,12 +93,12 @@ PAGES.vehicle = () => `
   <div class="page-header">
     <h1>Phân tích mật độ xe</h1>
   </div>
-  <div class="charts-grid">
-    <div class="chart-card full-width">
-      <div class="chart-header"><h3>Mật độ xe theo tuyến đường</h3><span class="chart-badge live">LIVE</span></div>
-      <div class="chart-body tall"><canvas id="chart-vehicle-density"></canvas></div>
+    <div class="charts-grid">
+      <div class="chart-card full-width">
+        <div class="chart-header"><h3>Mật độ xe theo tuyến đường</h3><span class="chart-badge status-sync">LIVE</span></div>
+        <div class="chart-body tall"><canvas id="chart-vehicle-density"></canvas></div>
+      </div>
     </div>
-  </div>
   <div class="road-list" id="road-list"></div>
 `;
 
@@ -143,77 +143,77 @@ PAGES.monitor = () => `
 // === DỰ ĐOÁN TẮC ĐƯỜNG ===
 PAGES.prediction = () => `
   <div class="page-header">
-    <h1>🔮 Dự đoán tắc đường</h1>
+    <h1>Dự báo lưu lượng</h1>
     <div class="header-actions">
-      <select id="pred-horizon" onchange="loadPredictions()" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2);color:var(--text)">
+      <select id="pred-horizon" onchange="loadPredictions()" style="padding:8px 12px;border-radius:8px;background:var(--surface-container);color:var(--on-surface)">
         <option value="5">5 phút tới</option>
         <option value="10">10 phút tới</option>
         <option value="15">15 phút tới</option>
         <option value="30">30 phút tới</option>
       </select>
-      <button onclick="loadPredictions()" style="padding:8px 16px;background:var(--primary,#6366f1);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600">🔄 Cập nhật</button>
+      <button onclick="loadPredictions()" class="btn-primary">Cập nhật</button>
     </div>
   </div>
 
   <div class="kpi-grid">
-    <div class="kpi-card"><div class="kpi-label">🔴 Đường sắp tắc</div><div class="kpi-value" id="pred-kpi-danger">-</div></div>
-    <div class="kpi-card"><div class="kpi-label">📊 Xác suất TB</div><div class="kpi-value" id="pred-kpi-avg-prob">-</div></div>
-    <div class="kpi-card"><div class="kpi-label">⏱️ Trễ TB (phút)</div><div class="kpi-value" id="pred-kpi-avg-delay">-</div></div>
-    <div class="kpi-card"><div class="kpi-label">🟢 Đường an toàn</div><div class="kpi-value" id="pred-kpi-safe">-</div></div>
-    <div class="kpi-card"><div class="kpi-label">⚠️ Rủi ro cao</div><div class="kpi-value" id="pred-kpi-high-risk">-</div></div>
-    <div class="kpi-card"><div class="kpi-label">🕐 Cập nhật</div><div class="kpi-value" id="pred-kpi-time" style="font-size:13px">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Đường sắp tắc</div><div class="kpi-value" id="pred-kpi-danger">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Xác suất TB</div><div class="kpi-value" id="pred-kpi-avg-prob">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Trễ TB (phút)</div><div class="kpi-value" id="pred-kpi-avg-delay">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Đường an toàn</div><div class="kpi-value" id="pred-kpi-safe">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Rủi ro cao</div><div class="kpi-value" id="pred-kpi-high-risk">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Cập nhật</div><div class="kpi-value" id="pred-kpi-time" style="font-size:13px">-</div></div>
   </div>
 
   <div class="charts-grid">
     <div class="chart-card">
-      <div class="chart-header"><h3>📊 Phân bố xác suất tắc đường</h3><span class="chart-badge live">ML</span></div>
+      <div class="chart-header"><h3>Phân bố xác suất tắc đường</h3><span class="chart-badge status-sync">ML</span></div>
       <div class="chart-body"><canvas id="chart-pred-dist"></canvas></div>
     </div>
     <div class="chart-card">
-      <div class="chart-header"><h3>⏱️ Thời gian trễ dự kiến (phút)</h3><span class="chart-badge live">ML</span></div>
+      <div class="chart-header"><h3>Thời gian trễ dự kiến (phút)</h3><span class="chart-badge status-sync">ML</span></div>
       <div class="chart-body"><canvas id="chart-pred-delay"></canvas></div>
     </div>
     <div class="chart-card">
-      <div class="chart-header"><h3>🔴 Top 10 đường nguy hiểm nhất</h3><span class="chart-badge" style="background:#ef4444;color:#fff">HIGH RISK</span></div>
+      <div class="chart-header"><h3>Top 10 đường nguy hiểm nhất</h3><span class="chart-badge" style="background:var(--error-container);color:var(--error)">HIGH RISK</span></div>
       <div class="chart-body tall"><canvas id="chart-pred-top10"></canvas></div>
     </div>
     <div class="chart-card">
-      <div class="chart-header"><h3>🟢 Top 10 đường thông thoáng nhất</h3><span class="chart-badge" style="background:#22c55e;color:#fff">SAFE</span></div>
+      <div class="chart-header"><h3>Top 10 đường thông thoáng nhất</h3><span class="chart-badge" style="background:var(--tertiary-container);color:var(--tertiary)">SAFE</span></div>
       <div class="chart-body tall"><canvas id="chart-pred-safe10"></canvas></div>
     </div>
   </div>
 
   <div class="charts-grid">
     <div class="chart-card full-width">
-      <div class="chart-header"><h3>🕐 Dự báo tắc đường theo khung giờ trong ngày</h3><span class="chart-badge live">FORECAST</span></div>
+      <div class="chart-header"><h3>Dự báo tắc đường theo khung giờ</h3><span class="chart-badge status-sync">FORECAST</span></div>
       <div class="chart-body"><canvas id="chart-pred-hourly"></canvas></div>
     </div>
   </div>
 
   <div class="charts-grid">
     <div class="chart-card">
-      <div class="chart-header"><h3>🌡️ Ảnh hưởng thời tiết đến tắc đường</h3></div>
+      <div class="chart-header"><h3>Ảnh hưởng thời tiết đến tắc đường</h3></div>
       <div class="chart-body"><canvas id="chart-pred-weather-impact"></canvas></div>
     </div>
     <div class="chart-card">
-      <div class="chart-header"><h3>🚗 Tốc độ hiện tại vs Xác suất tắc</h3></div>
+      <div class="chart-header"><h3>Tốc độ hiện tại vs Xác suất tắc</h3></div>
       <div class="chart-body"><canvas id="chart-pred-speed-vs-prob"></canvas></div>
     </div>
   </div>
 
   <div class="table-container" style="margin-top:8px">
-    <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;gap:12px;flex-wrap:wrap;align-items:center">
-      <span style="font-weight:700;font-size:14px">📋 Chi tiết dự đoán tất cả tuyến đường</span>
+    <div style="padding:16px 20px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+      <span style="font-weight:700;font-size:14px">Chi tiết dự đoán tất cả tuyến đường</span>
       <input id="pred-search" type="text" placeholder="Tìm road_id..." oninput="filterPredTable()"
-        style="padding:6px 12px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:var(--bg2);color:var(--text);flex:1;max-width:240px">
+        style="padding:6px 12px;border-radius:8px;font-size:12px;background:var(--surface-container);color:var(--on-surface);flex:1;max-width:240px">
       <select id="pred-filter-status" onchange="filterPredTable()"
-        style="padding:6px 12px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:var(--bg2);color:var(--text)">
+        style="padding:6px 12px;border-radius:8px;font-size:12px;background:var(--surface-container);color:var(--on-surface)">
         <option value="">Tất cả</option>
         <option value="congested">Sắp tắc</option>
         <option value="normal">Bình thường</option>
       </select>
       <select id="pred-sort" onchange="filterPredTable()"
-        style="padding:6px 12px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:var(--bg2);color:var(--text)">
+        style="padding:6px 12px;border-radius:8px;font-size:12px;background:var(--surface-container);color:var(--on-surface)">
         <option value="prob_desc">Xác suất cao nhất</option>
         <option value="prob_asc">Xác suất thấp nhất</option>
         <option value="delay_desc">Trễ nhiều nhất</option>
