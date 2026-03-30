@@ -54,7 +54,7 @@ async function navigate(page, navEl) {
       if (window.renderDashboardCharts) renderDashboardCharts();
       break;
     case 'map':
-      setTimeout(() => { if (window.initMap) window.initMap(); }, 150);
+      setTimeout(() => { if (window.initMap) window.initMap(); }, 500);
       break;
     case 'explorer':
       updateExplorer();

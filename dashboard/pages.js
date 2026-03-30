@@ -80,7 +80,7 @@ PAGES.map = () => `
   </div>
 
   <!-- Map container — full height -->
-  <div id="map-container" style="width:100%;height:calc(100vh - 220px);min-height:500px;border-radius:16px;overflow:hidden;border:1px solid var(--border)"></div>
+  <div id="map-container" style="width:100%;height:600px;border-radius:16px;overflow:hidden;border:1px solid var(--border)"></div>
 `;
 
 // === EXPLORER — Road Data ===

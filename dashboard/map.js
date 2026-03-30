@@ -138,13 +138,24 @@ function _vehiclePopup(v) {
 }
 
 // ── Render road markers từ backend data ────────────────────────────────────
-function _renderRoadMarkers(roads) {
+// ── Render road markers từ backend data ────────────────────────────────────
+async function _renderRoadMarkers(roads) {
   _layerGroups.markers.clearLayers();
 
-  roads.forEach(road => {
-    const lat = parseFloat(road.lat || 0);
-    const lng = parseFloat(road.lng || 0);
-    if (!lat && !lng) return;
+  // Parallel resolve
+  const tasks = roads.map(async road => {
+    const street = road.street || road.road_name || road.road_id || '';
+    const district = road.district || '';
+    const coords = await window.resolveStreetCoords?.(street, district);
+    return { road, coords, street, district };
+  });
+
+  const results = await Promise.all(tasks);
+
+  for (const { road, coords, street, district } of results) {
+    const lat = coords?.lat ?? parseFloat(road.lat || 0);
+    const lng = coords?.lng ?? parseFloat(road.lng || 0);
+    if (!lat && !lng) continue;
 
     const speed = parseFloat(road.avg_speed || 0);
     const level = road.congestion_level
@@ -157,81 +168,84 @@ function _renderRoadMarkers(roads) {
       zIndexOffset: isHigh ? 1000 : 0,
     });
 
-    marker.bindPopup(_roadPopup({ ...road, congestion_level: level }), {
-      maxWidth: 280,
-      className: 'traffic-popup',
-    });
+    marker.bindPopup(_roadPopup({
+      ...road,
+      congestion_level: level,
+      lat, lng,
+      road_id: street && district ? `${street} (${district})` : (road.road_id || '-'),
+    }), { maxWidth: 280, className: 'traffic-popup' });
 
     marker.bindTooltip(
-      `<b>${road.road_id || '-'}</b> — ${speed.toFixed(1)} km/h`,
+      `<b>${street || road.road_id || '-'}</b>${district ? ` — ${district}` : ''}<br>${speed.toFixed(1)} km/h`,
       { sticky: true, className: 'traffic-tooltip' }
     );
 
     _layerGroups.markers.addLayer(marker);
-  });
+  }
 }
 
-// ── Render road polylines — nhóm theo street name ─────────────────────────
-function _renderRoadLines(roads) {
+// ── Render road polylines — dùng polyline thật từ street_coords ────────────
+// ── Render road polylines — dùng polyline thật từ street_coords ────────────
+async function _renderRoadLines(roads) {
   _layerGroups.lines.clearLayers();
 
-  // Nhóm các điểm theo street/road_id prefix
   const streetMap = {};
-  roads.forEach(road => {
-    const lat = parseFloat(road.lat || 0);
-    const lng = parseFloat(road.lng || 0);
-    if (!lat && !lng) return;
+  for (const road of roads) {
+    const street = road.street || road.road_name || road.road_id || '';
+    const district = road.district || '';
+    if (!street) continue;
+    const key = `${street}|${district}`;
+    if (!streetMap[key]) streetMap[key] = { road, key, street, district };
+  }
 
-    // Dùng 3 ký tự đầu road_id để nhóm (cùng tuyến đường)
-    const key = (road.road_id || '').substring(0, 6) || road.district || 'unknown';
-    if (!streetMap[key]) streetMap[key] = [];
-    streetMap[key].push(road);
+  const tasks = Object.values(streetMap).map(async item => {
+    const coords = await window.resolveStreetCoords?.(item.street, item.district);
+    return { ...item, coords };
   });
 
-  Object.values(streetMap).forEach(group => {
-    if (group.length < 2) return;
+  const results = await Promise.all(tasks);
 
-    // Sort theo lng để vẽ đúng hướng
-    const sorted = [...group].sort((a, b) => parseFloat(a.lng) - parseFloat(b.lng));
-    const coords = sorted.map(r => [parseFloat(r.lat), parseFloat(r.lng)]);
+  for (const { road, coords, street, district } of results) {
+    let lineCoords;
+    if (coords?.polyline && coords.polyline.length >= 2) {
+      lineCoords = coords.polyline;
+    } else if (coords?.lat) {
+      const { lat, lng } = coords;
+      lineCoords = [[lat - 0.003, lng - 0.003], [lat, lng], [lat + 0.003, lng + 0.003]];
+    } else {
+      continue;
+    }
 
-    // Màu theo congestion trung bình
-    const avgSpeed = sorted.reduce((s, r) => s + parseFloat(r.avg_speed || 0), 0) / sorted.length;
-    const highCount = sorted.filter(r => r.status === 'congested').length;
-    const level = highCount > sorted.length / 2 ? 'High'
-      : sorted.filter(r => r.status === 'slow').length > sorted.length / 3 ? 'Medium' : 'Low';
-    const col = _color(level, avgSpeed);
+    const speed = parseFloat(road.avg_speed || 0);
+    const level = road.status === 'congested' ? 'High' : road.status === 'slow' ? 'Medium' : 'Low';
+    const col = _color(level, speed);
 
-    // Polyline
-    const line = L.polyline(coords, {
+    const line = L.polyline(lineCoords, {
       color: col.hex,
-      weight: 4,
-      opacity: 0.75,
-      smoothFactor: 2,
+      weight: 5,
+      opacity: 0.8,
+      smoothFactor: 1,
     });
 
     line.bindTooltip(
-      `🛣️ ${sorted[0].road_id?.substring(0, 8) || '-'} — TB ${avgSpeed.toFixed(1)} km/h`,
+      `🛣️ <b>${street}</b>${district ? ` — ${district}` : ''}<br>TB ${speed.toFixed(1)} km/h`,
       { sticky: true, className: 'traffic-tooltip' }
     );
 
     _layerGroups.lines.addLayer(line);
 
-    // Mũi tên hướng ở giữa line
-    if (coords.length >= 2) {
-      const mid = coords[Math.floor(coords.length / 2)];
-      const prev = coords[Math.floor(coords.length / 2) - 1];
+    if (lineCoords.length >= 2) {
+      const mid = lineCoords[Math.floor(lineCoords.length / 2)];
+      const prev = lineCoords[Math.floor(lineCoords.length / 2) - 1];
       const angle = Math.atan2(mid[1] - prev[1], mid[0] - prev[0]) * 180 / Math.PI - 90;
-
       const arrowIcon = L.divIcon({
         className: '',
         html: `<div style="color:${col.hex};font-size:13px;transform:rotate(${angle}deg);line-height:1">▲</div>`,
-        iconSize: [13, 13],
-        iconAnchor: [6, 6],
+        iconSize: [13, 13], iconAnchor: [6, 6],
       });
       L.marker(mid, { icon: arrowIcon, interactive: false }).addTo(_layerGroups.lines);
     }
-  });
+  }
 }
 
 // ── Heatmap từ vehicle density ─────────────────────────────────────────────
@@ -268,26 +282,33 @@ function _renderHeatmap(roads) {
 }
 
 // ── Animated vehicle markers ───────────────────────────────────────────────
-function _startVehicleAnimation(roads) {
-  // Dừng animation cũ
+async function _startVehicleAnimation(roads) {
   if (_animFrame) { cancelAnimationFrame(_animFrame); _animFrame = null; }
   _animMarkers.forEach(m => _layerGroups.vehicles.removeLayer(m));
   _animMarkers = [];
 
-  const validRoads = roads.filter(r => parseFloat(r.lat || 0) !== 0);
+  const validRoads = roads.filter(r => r.road_id || r.street);
   if (!validRoads.length) return;
 
-  // Tạo vehicle markers — mỗi road tạo 1-3 xe tùy vehicle_count
-  validRoads.forEach(road => {
+  for (const road of validRoads.slice(0, 80)) {
+    const street = road.street || road.road_name || road.road_id || '';
+    const district = road.district || '';
+    const coords = await window.resolveStreetCoords?.(street, district);
+
+    // Dùng tọa độ thật nếu có, fallback về lat/lng
+    const baseLat = coords?.lat ?? parseFloat(road.lat || 0);
+    const baseLng = coords?.lng ?? parseFloat(road.lng || 0);
+    if (!baseLat && !baseLng) continue;
+
     const count = Math.min(3, Math.max(1, Math.floor(parseInt(road.vehicle_count || 1) / 10)));
     const speed = parseFloat(road.avg_speed || 0);
     const level = road.status === 'congested' ? 'High' : road.status === 'slow' ? 'Medium' : 'Low';
     const col = _color(level, speed);
 
     for (let i = 0; i < count; i++) {
-      const jitter = 0.002;
-      const lat = parseFloat(road.lat) + (Math.random() - 0.5) * jitter;
-      const lng = parseFloat(road.lng) + (Math.random() - 0.5) * jitter;
+      const jitter = 0.0015;
+      const lat = baseLat + (Math.random() - 0.5) * jitter;
+      const lng = baseLng + (Math.random() - 0.5) * jitter;
 
       const marker = L.circleMarker([lat, lng], {
         radius: 4,
@@ -298,45 +319,37 @@ function _startVehicleAnimation(roads) {
       });
 
       marker.bindPopup(_vehiclePopup({
-        vehicle_id: `${road.road_id}-V${i + 1}`,
+        vehicle_id: `${road.road_id || street}-V${i + 1}`,
         vehicle_type: ['Motorbike', 'Car', 'Bus'][i % 3],
         speed_kmph: speed + (Math.random() - 0.5) * 10,
-        street: road.road_id,
-        district: road.district || '-',
+        street: street,
+        district: district,
         fuel_level_percentage: Math.floor(Math.random() * 80 + 20),
         passenger_count: Math.floor(Math.random() * 4),
         congestion_level: level,
       }));
 
-      // Lưu metadata để animate
       marker._baseLat = lat;
       marker._baseLng = lng;
       marker._speed = speed;
       marker._phase = Math.random() * Math.PI * 2;
-      marker._col = col;
 
       _layerGroups.vehicles.addLayer(marker);
       _animMarkers.push(marker);
     }
-  });
+  }
 
   // Animation loop
   let lastTs = 0;
   function loop(ts) {
-    if (ts - lastTs > 120) { // ~8fps để nhẹ
+    if (ts - lastTs > 120) {
       lastTs = ts;
       _tick++;
-
       _animMarkers.forEach(m => {
-        const spd = m._speed;
-        if (spd < 2) return; // xe đứng yên
-
-        // Di chuyển nhỏ theo hướng ngẫu nhiên, tỉ lệ với speed
-        const factor = (spd / 60) * 0.00015;
+        if (m._speed < 2) return;
+        const factor = (m._speed / 60) * 0.00012;
         const angle = m._phase + _tick * 0.04;
-        const newLat = m._baseLat + Math.sin(angle) * factor;
-        const newLng = m._baseLng + Math.cos(angle) * factor;
-        m.setLatLng([newLat, newLng]);
+        m.setLatLng([m._baseLat + Math.sin(angle) * factor, m._baseLng + Math.cos(angle) * factor]);
       });
     }
     _animFrame = requestAnimationFrame(loop);
@@ -362,10 +375,11 @@ function _updateStats(roads) {
 }
 
 // ── Full redraw ────────────────────────────────────────────────────────────
-function _redraw() {
+async function _redraw() {
   const roads = DB.state.roads || [];
-  _renderRoadMarkers(roads);
-  _renderRoadLines(roads);
+  if (_map) _map.invalidateSize({ animate: false });
+  await _renderRoadMarkers(roads);
+  await _renderRoadLines(roads);
   _renderHeatmap(roads);
   _startVehicleAnimation(roads);
   _updateStats(roads);
@@ -385,7 +399,16 @@ window.initMap = function () {
 
   // Dừng animation cũ
   if (_animFrame) { cancelAnimationFrame(_animFrame); _animFrame = null; }
-  if (_map) { _map.remove(); _map = null; }
+
+  // Destroy map cũ nếu có (tránh "Map container is already initialized")
+  if (_map) {
+    _map.remove();
+    _map = null;
+  }
+
+  // Đảm bảo container có kích thước thật trước khi init
+  container.style.height = '600px';
+  container.style.width = '100%';
 
   // Tạo map Leaflet với tile thật
   _map = L.map('map-container', {
@@ -431,9 +454,9 @@ window.initMap = function () {
       '🛰️ Satellite':    satelliteTile,
     },
     {
-      '🛣️ Tuyến đường':      _layerGroups.lines,
-      '🌡️ Heatmap mật độ':  _layerGroups.heatmap,
-      '📍 Điểm giao thông':  _layerGroups.markers,
+      '🛣️ Tuyến đường':       _layerGroups.lines,
+      '🌡️ Heatmap mật độ':   _layerGroups.heatmap,
+      '📍 Điểm giao thông':   _layerGroups.markers,
       '🚗 Xe đang di chuyển': _layerGroups.vehicles,
     },
     { position: 'topright', collapsed: false }
@@ -442,7 +465,10 @@ window.initMap = function () {
   // Inject CSS
   _injectCSS();
 
-  setTimeout(() => { _map.invalidateSize(); }, 200);
+  // invalidateSize nhiều lần để đảm bảo map render đúng
+  setTimeout(() => { if (_map) _map.invalidateSize(); }, 200);
+  setTimeout(() => { if (_map) _map.invalidateSize(); }, 600);
+  setTimeout(() => { if (_map) _map.invalidateSize(); }, 1200);
 
   // Render data
   _redraw();
