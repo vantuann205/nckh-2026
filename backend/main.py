@@ -24,6 +24,18 @@ from processing.offline_pipeline import ensure_processed_dataset
 from stream_processing.config import REDIS_HOST, REDIS_PORT, REDIS_DB, REDIS_CHANNEL
 from stream_processing.async_loader import PROGRESS, load_all_data, load_single_file, get_data_files
 
+# ── In-memory response cache ──────────────────────────────────────────────────
+_CACHE: Dict[str, tuple] = {}
+
+def _cache_get(key: str):
+    entry = _CACHE.get(key)
+    if entry and time.monotonic() < entry[1]:
+        return entry[0]
+    return None
+
+def _cache_set(key: str, data, ttl: float = 3.0):
+    _CACHE[key] = (data, time.monotonic() + ttl)
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("TrafficAPI")
 
@@ -509,6 +521,101 @@ async def ingest_event(event: RealtimeEvent, background_tasks: BackgroundTasks):
         "risk_score": risk_score,
         "decision": decision,
     }
+
+
+@app.get("/traffic/indicators")
+async def get_indicators():
+    """Smart traffic indicators: congestion, violations, fuel, delay, risk."""
+    if not redis_client:
+        raise HTTPException(status_code=503, detail="Redis not available")
+
+    cached = _cache_get("indicators")
+    if cached:
+        return cached
+
+    rc = redis_client.client
+    roads = redis_client.get_all_roads()
+
+    # Realtime congestion
+    congested = [r for r in roads if r.get("congestion_level") == "High" or float(r.get("avg_speed") or 99) < 20]
+    slow      = [r for r in roads if r.get("congestion_level") == "Moderate" or (20 <= float(r.get("avg_speed") or 99) < 40)]
+
+    # Accumulated stats from Redis hashes
+    def _hgetall_int(key): raw = rc.hgetall(key); return {k: int(float(v)) for k,v in raw.items()} if raw else {}
+    def _hgetall_float(key): raw = rc.hgetall(key); return {k: float(v) for k,v in raw.items()} if raw else {}
+
+    total_by_road   = _hgetall_int("traffic:stats:total_by_road")
+    high_by_road    = _hgetall_int("traffic:stats:high_congestion_by_road")
+    delay_sum_road  = _hgetall_float("traffic:stats:delay_sum_by_road")
+    risk_sum_road   = _hgetall_float("traffic:stats:risk_sum_by_road")
+    speeding_road   = _hgetall_int("traffic:stats:speeding_by_road")
+    vtype_speeding  = _hgetall_int("traffic:stats:speeding_by_vtype")
+    fuel_dist       = _hgetall_int("traffic:stats:fuel_distribution")
+
+    # Hotspot roads (by High congestion %)
+    hotspot_roads = []
+    for road, total in total_by_road.items():
+        if total == 0: continue
+        high = high_by_road.get(road, 0)
+        avg_delay = round(delay_sum_road.get(road, 0) / total, 1)
+        avg_risk  = round(risk_sum_road.get(road, 0) / total, 2)
+        hotspot_roads.append({"road_name": road, "high_pct": round(high/total*100,1),
+                               "avg_delay": avg_delay, "avg_risk": avg_risk, "total": total})
+    hotspot_roads.sort(key=lambda x: -x["high_pct"])
+
+    # Top delay roads
+    top_delay = sorted(
+        [{"road": r, "avg_delay": round(delay_sum_road.get(r,0)/t,1)}
+         for r,t in total_by_road.items() if t > 0],
+        key=lambda x: -x["avg_delay"])[:15]
+
+    # Top risk roads
+    top_risk = sorted(
+        [{"road": r, "avg_risk": round(risk_sum_road.get(r,0)/t,2)}
+         for r,t in total_by_road.items() if t > 0],
+        key=lambda x: -x["avg_risk"])[:10]
+
+    # Top violation roads
+    top_violations = sorted(speeding_road.items(), key=lambda x: -x[1])[:10]
+
+    avg_fuel    = float(rc.hget("traffic:summary", "avg_fuel_level") or 0)
+    avg_range   = round(avg_fuel / 100 * 500, 0)  # assume 500km full tank
+    total_speed = int(float(rc.hget("traffic:summary", "speeding_alerts") or 0))
+    total_fuel  = int(float(rc.hget("traffic:summary", "low_fuel_alerts") or 0))
+
+    result = {
+        "realtime": {
+            "congested_count": len(congested),
+            "slow_count":      len(slow),
+            "normal_count":    max(0, len(roads) - len(congested) - len(slow)),
+            "congested_roads": [{"road": r.get("road_name"), "district": r.get("district"),
+                                  "speed": r.get("avg_speed"), "delay": r.get("estimated_delay"),
+                                  "risk": r.get("risk_score")} for r in congested[:10]],
+        },
+        "violations": {
+            "total_speeding":      total_speed,
+            "top_roads":           [{"road": k, "count": v} for k,v in top_violations],
+            "by_vehicle_type":     vtype_speeding,
+            "speeding_rate_pct":   round(total_speed / max(1, int(float(rc.hget("traffic:summary","total_vehicles") or 1))) * 100, 1),
+        },
+        "fuel": {
+            "total_low_fuel":  total_fuel,
+            "avg_fuel_pct":    avg_fuel,
+            "avg_range_km":    avg_range,
+            "distribution":    fuel_dist,
+            "low_fuel_rate_pct": round(total_fuel / max(1, int(float(rc.hget("traffic:summary","total_vehicles") or 1))) * 100, 1),
+        },
+        "congestion_patterns": {
+            "hotspot_roads": hotspot_roads[:15],
+            "top_delay_roads": top_delay,
+        },
+        "risk": {
+            "top_risk_roads": top_risk,
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    _cache_set("indicators", result, ttl=5.0)
+    return result
 
 
 @app.get("/traffic/stats")

@@ -73,6 +73,12 @@ async function navigate(page, navEl) {
     case 'weather':
       if (window.renderWeather) renderWeather();
       break;
+    case 'congestion':
+      if (window.renderCongestionAnalysis) renderCongestionAnalysis();
+      break;
+    case 'indicators':
+      if (window.renderIndicators) renderIndicators();
+      break;
     case 'monitor':
       updateMonitor();
       if (window.renderMonitorCharts) renderMonitorCharts();
@@ -82,8 +88,6 @@ async function navigate(page, navEl) {
       break;
   }
 }
-
-// ── EXPLORER ──────────────────────────────────────────────────────────────────
 function updateExplorer() {
   const search = (document.getElementById('ex-search')?.value || '').toLowerCase();
   const status = document.getElementById('ex-status')?.value || '';
@@ -344,6 +348,12 @@ async function updatePageData(page) {
       break;
     case 'weather':
       if (window.renderWeather) renderWeather();
+      break;
+    case 'congestion':
+      if (window.renderCongestionAnalysis) renderCongestionAnalysis();
+      break;
+    case 'indicators':
+      if (window.renderIndicators) renderIndicators();
       break;
     case 'monitor':
       updateMonitor();

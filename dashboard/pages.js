@@ -270,3 +270,88 @@ window.renderViolations = function () {
 };
 window.renderSparkJobs = function () {};
 window.renderWorkerNodes = function () {};
+
+// === SMART INDICATORS PAGE ===
+PAGES.indicators = () => `
+  <div class="page-header">
+    <h1>🧠 Chỉ báo thông minh</h1>
+    <div class="header-actions">
+      <span class="ws-badge disconnected" id="ws-badge">🔴 Disconnected</span>
+      <span class="last-update" id="last-update"></span>
+    </div>
+  </div>
+
+  <div style="margin-bottom:8px;font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.05em">📡 Trạng thái realtime</div>
+  <div class="kpi-grid" style="margin-bottom:24px">
+    <div class="kpi-card" style="border-left:4px solid #ef4444">
+      <div class="kpi-label">🔴 Đang tắc nghẽn</div><div class="kpi-value" id="ind-congested">-</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #f59e0b">
+      <div class="kpi-label">🟡 Đang chậm</div><div class="kpi-value" id="ind-slow">-</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #22c55e">
+      <div class="kpi-label">🟢 Bình thường</div><div class="kpi-value" id="ind-normal">-</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #f97316">
+      <div class="kpi-label">⚡ Vi phạm tốc độ</div><div class="kpi-value" id="ind-speeding">-</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #8b5cf6">
+      <div class="kpi-label">⛽ Cảnh báo nhiên liệu</div><div class="kpi-value" id="ind-lowfuel">-</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #06b6d4">
+      <div class="kpi-label">🛣️ Quãng đường TB còn lại</div>
+      <div class="kpi-value" id="ind-range">- <span style="font-size:14px;color:var(--text3)">km</span></div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #ec4899">
+      <div class="kpi-label">📊 Tỷ lệ vi phạm</div>
+      <div class="kpi-value" id="ind-viol-rate">- <span style="font-size:14px;color:var(--text3)">%</span></div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #10b981">
+      <div class="kpi-label">⛽ Nhiên liệu TB</div>
+      <div class="kpi-value" id="ind-fuel-avg">- <span style="font-size:14px;color:var(--text3)">%</span></div>
+    </div>
+  </div>
+
+  <div class="charts-grid">
+    <div class="chart-card">
+      <div class="chart-header"><h3>⚡ Vi phạm tốc độ theo loại xe</h3>${_liveBadge()}</div>
+      <div class="chart-body"><canvas id="chart-ind-vtype"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header"><h3>⛽ Phân bổ mức nhiên liệu</h3>${_liveBadge()}</div>
+      <div class="chart-body"><canvas id="chart-ind-fuel"></canvas></div>
+    </div>
+    <div class="chart-card full-width">
+      <div class="chart-header"><h3>🔥 Điểm ùn tắc nặng nhất (High %)</h3>${_liveBadge()}</div>
+      <div class="chart-body tall" style="height:460px"><canvas id="chart-ind-hotspot"></canvas></div>
+    </div>
+    <div class="chart-card full-width">
+      <div class="chart-header"><h3>⏱️ Delay dự báo theo tuyến đường (phút)</h3>${_liveBadge()}</div>
+      <div class="chart-body tall" style="height:460px"><canvas id="chart-ind-delay"></canvas></div>
+    </div>
+    <div class="chart-card full-width">
+      <div class="chart-header"><h3>⚠️ Rủi ro trung bình theo tuyến</h3>${_liveBadge()}</div>
+      <div class="chart-body tall" style="height:360px"><canvas id="chart-ind-risk"></canvas></div>
+    </div>
+  </div>
+
+  <div class="table-container" style="margin-top:8px">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--border);font-weight:700;font-size:14px">
+      ⚡ Top tuyến đường vi phạm tốc độ nhiều nhất
+    </div>
+    <table>
+      <thead><tr><th>Tuyến đường</th><th>Số vi phạm</th></tr></thead>
+      <tbody id="ind-viol-tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="table-container" style="margin-top:8px">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--border);font-weight:700;font-size:14px">
+      🔴 Tuyến đường đang tắc nghẽn
+    </div>
+    <table>
+      <thead><tr><th>Tuyến đường</th><th>Quận</th><th>Tốc độ</th><th>Delay</th><th>Rủi ro</th></tr></thead>
+      <tbody id="ind-cong-tbody"></tbody>
+    </table>
+  </div>
+`;

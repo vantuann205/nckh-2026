@@ -503,3 +503,239 @@ function renderWeatherChart(data, colors) {
     });
   }
 }
+
+// ── Congestion Analysis Page ──────────────────────────────────────────────────
+
+window.renderCongestionAnalysis = async function () {
+  const colors = getChartColors();
+  try {
+    const res = await fetch(`${API_BASE}/traffic/indicators`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const hotspots = data.congestion_patterns?.hotspot_roads || [];
+    const districts = [];
+    const congLevels = {};
+
+    // Build district summary from hotspots
+    const distMap = {};
+    for (const h of hotspots) {
+      if (!distMap[h.road_name]) distMap[h.road_name] = h;
+    }
+
+    // Pie: congestion levels from stats
+    const statsRes = await fetch(`${API_BASE}/traffic/stats`);
+    if (statsRes.ok) {
+      const statsData = await statsRes.json();
+      Object.assign(congLevels, statsData.congestion_levels || {});
+    }
+
+    // Bar: hotspot roads
+    const ctxRoads = document.getElementById('chart-cong-roads');
+    if (ctxRoads && hotspots.length) {
+      const wrapper = ctxRoads.closest('.chart-body');
+      if (wrapper) wrapper.style.height = Math.max(480, hotspots.length * 22) + 'px';
+      destroyChart('cong-roads');
+      chartInstances['cong-roads'] = new Chart(ctxRoads, {
+        type: 'bar',
+        data: {
+          labels: hotspots.map(h => h.road_name),
+          datasets: [
+            { label: 'High %',    data: hotspots.map(h => h.high_pct),  backgroundColor: colors.red+'cc',    borderColor: colors.red,    borderWidth:1, borderRadius:3 },
+            { label: 'Delay TB',  data: hotspots.map(h => h.avg_delay), backgroundColor: colors.purple+'cc', borderColor: colors.purple, borderWidth:1, borderRadius:3 },
+          ],
+        },
+        options: { indexAxis:'y', responsive:true, maintainAspectRatio:false,
+          plugins:{ legend:{ position:'top' } },
+          scales:{ x:{ beginAtZero:true }, y:{ ticks:{ font:{ size:10, family:'JetBrains Mono' } } } } },
+      });
+    }
+
+    // Pie: overall congestion
+    const ctxPie = document.getElementById('chart-cong-pie');
+    if (ctxPie && Object.keys(congLevels).length) {
+      const order = ['High','Moderate','Low'];
+      const labels = order.filter(k => congLevels[k]);
+      const vals   = labels.map(k => congLevels[k]);
+      destroyChart('cong-pie');
+      chartInstances['cong-pie'] = new Chart(ctxPie, {
+        type: 'doughnut',
+        data: { labels, datasets: [{ data: vals, backgroundColor:[colors.red+'cc',colors.yellow+'cc',colors.green+'cc'], borderColor:'#fff', borderWidth:3 }] },
+        options: { responsive:true, maintainAspectRatio:false,
+          plugins:{ legend:{ position:'bottom' },
+            tooltip:{ callbacks:{ label: ctx => `${ctx.label}: ${ctx.parsed.toLocaleString()} (${((ctx.parsed/vals.reduce((a,b)=>a+b,0))*100).toFixed(1)}%)` } } } },
+      });
+    }
+
+    // Table
+    const tbody = document.getElementById('cong-tbody');
+    if (tbody) {
+      tbody.innerHTML = hotspots.map(h => `
+        <tr>
+          <td style="font-weight:600">${h.road_name}</td>
+          <td style="font-size:12px;color:var(--text3)">${h.avg_delay} phút</td>
+          <td><span style="color:${h.high_pct>35?'var(--red)':h.high_pct>30?'#d97706':'var(--green)'};font-weight:700">${h.high_pct}%</span></td>
+          <td>${h.avg_risk}</td>
+        </tr>`).join('');
+    }
+  } catch(e) { console.error('Congestion analysis error:', e); }
+};
+
+// ── Smart Indicators Page ─────────────────────────────────────────────────────
+
+window.renderIndicators = async function () {
+  const colors = getChartColors();
+  const fmt = n => Number(n || 0).toLocaleString();
+
+  let data;
+  try {
+    const res = await fetch(`${API_BASE}/traffic/indicators`);
+    if (!res.ok) return;
+    data = await res.json();
+  } catch (e) { console.error('Indicators error:', e); return; }
+
+  const rt   = data.realtime   || {};
+  const viol = data.violations || {};
+  const fuel = data.fuel       || {};
+  const cong = data.congestion_patterns || {};
+  const risk = data.risk || {};
+
+  // KPI cards
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.innerHTML = val; };
+  set('ind-congested',  fmt(rt.congested_count));
+  set('ind-slow',       fmt(rt.slow_count));
+  set('ind-normal',     fmt(rt.normal_count));
+  set('ind-speeding',   fmt(viol.total_speeding));
+  set('ind-lowfuel',    fmt(fuel.total_low_fuel));
+  set('ind-range',      `${fuel.avg_range_km || 0} <span style="font-size:14px;color:var(--text3)">km</span>`);
+  set('ind-viol-rate',  `${viol.speeding_rate_pct || 0} <span style="font-size:14px;color:var(--text3)">%</span>`);
+  set('ind-fuel-avg',   `${fuel.avg_fuel_pct || 0} <span style="font-size:14px;color:var(--text3)">%</span>`);
+
+  // Chart 1: Violations by vehicle type (doughnut)
+  const ctxVtype = document.getElementById('chart-ind-vtype');
+  if (ctxVtype && Object.keys(viol.by_vehicle_type || {}).length) {
+    const labels = Object.keys(viol.by_vehicle_type);
+    const vals   = Object.values(viol.by_vehicle_type);
+    destroyChart('ind-vtype');
+    chartInstances['ind-vtype'] = new Chart(ctxVtype, {
+      type: 'doughnut',
+      data: { labels, datasets: [{ data: vals, backgroundColor: colors.palette.map(c => c+'cc'), borderColor:'#fff', borderWidth:2 }] },
+      options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'bottom' },
+        tooltip:{ callbacks:{ label: ctx => `${ctx.label}: ${ctx.parsed.toLocaleString()} (${((ctx.parsed/vals.reduce((a,b)=>a+b,0))*100).toFixed(1)}%)` } } } },
+    });
+  }
+
+  // Chart 2: Fuel distribution (bar)
+  const ctxFuel = document.getElementById('chart-ind-fuel');
+  if (ctxFuel && Object.keys(fuel.distribution || {}).length) {
+    const order = ['0-20%','20-40%','40-60%','60-80%','80-100%'];
+    const labels = order.filter(k => fuel.distribution[k]);
+    const vals   = labels.map(k => fuel.distribution[k] || 0);
+    const fuelColors = ['#ef4444','#f97316','#f59e0b','#22c55e','#10b981'];
+    destroyChart('ind-fuel');
+    chartInstances['ind-fuel'] = new Chart(ctxFuel, {
+      type: 'bar',
+      data: { labels, datasets: [{ label:'Số xe', data:vals, backgroundColor: fuelColors.map(c=>c+'cc'), borderColor:fuelColors, borderWidth:2, borderRadius:6 }] },
+      options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } },
+        scales:{ y:{ beginAtZero:true, ticks:{ callback: v=>v.toLocaleString() } }, x:{ grid:{ display:false } } } },
+    });
+  }
+
+  // Chart 3: Hotspot roads (stacked bar High/Moderate/Low %)
+  const ctxHot = document.getElementById('chart-ind-hotspot');
+  const hotspots = cong.hotspot_roads || [];
+  if (ctxHot && hotspots.length) {
+    const wrapper = ctxHot.closest('.chart-body');
+    if (wrapper) wrapper.style.height = Math.max(460, hotspots.length * 22) + 'px';
+    destroyChart('ind-hotspot');
+    chartInstances['ind-hotspot'] = new Chart(ctxHot, {
+      type: 'bar',
+      data: {
+        labels: hotspots.map(h => h.road_name),
+        datasets: [
+          { label:'High %',     data: hotspots.map(h=>h.high_pct),     backgroundColor:colors.red+'cc',    borderColor:colors.red,    borderWidth:1, borderRadius:3 },
+          { label:'Avg Delay',  data: hotspots.map(h=>h.avg_delay),    backgroundColor:colors.purple+'cc', borderColor:colors.purple, borderWidth:1, borderRadius:3 },
+          { label:'Avg Risk',   data: hotspots.map(h=>h.avg_risk),     backgroundColor:colors.orange||colors.yellow+'cc', borderColor:colors.yellow, borderWidth:1, borderRadius:3 },
+        ],
+      },
+      options: {
+        indexAxis:'y', responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ position:'top' } },
+        scales:{ x:{ beginAtZero:true }, y:{ ticks:{ font:{ size:10, family:'JetBrains Mono' } } } },
+      },
+    });
+  }
+
+  // Chart 4: Delay per road (horizontal bar)
+  const ctxDelay = document.getElementById('chart-ind-delay');
+  const delayRoads = cong.top_delay_roads || [];
+  if (ctxDelay && delayRoads.length) {
+    const wrapper = ctxDelay.closest('.chart-body');
+    if (wrapper) wrapper.style.height = Math.max(460, delayRoads.length * 22) + 'px';
+    destroyChart('ind-delay');
+    chartInstances['ind-delay'] = new Chart(ctxDelay, {
+      type: 'bar',
+      data: {
+        labels: delayRoads.map(r => r.road),
+        datasets: [{ label:'Delay TB (phút)', data: delayRoads.map(r=>r.avg_delay),
+          backgroundColor: delayRoads.map(r => r.avg_delay > 15 ? colors.red+'cc' : r.avg_delay > 8 ? colors.yellow+'cc' : colors.green+'cc'),
+          borderColor: delayRoads.map(r => r.avg_delay > 15 ? colors.red : r.avg_delay > 8 ? colors.yellow : colors.green),
+          borderWidth:2, borderRadius:4 }],
+      },
+      options: {
+        indexAxis:'y', responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ display:false } },
+        scales:{ x:{ beginAtZero:true, title:{ display:true, text:'phút' } }, y:{ ticks:{ font:{ size:10 } } } },
+      },
+    });
+  }
+
+  // Chart 5: Risk per road
+  const ctxRisk = document.getElementById('chart-ind-risk');
+  const riskRoads = risk.top_risk_roads || [];
+  if (ctxRisk && riskRoads.length) {
+    destroyChart('ind-risk');
+    chartInstances['ind-risk'] = new Chart(ctxRisk, {
+      type: 'bar',
+      data: {
+        labels: riskRoads.map(r => r.road),
+        datasets: [{ label:'Risk TB', data: riskRoads.map(r=>r.avg_risk),
+          backgroundColor: riskRoads.map(r => r.avg_risk > 30 ? colors.red+'cc' : r.avg_risk > 15 ? colors.yellow+'cc' : colors.green+'cc'),
+          borderColor: riskRoads.map(r => r.avg_risk > 30 ? colors.red : r.avg_risk > 15 ? colors.yellow : colors.green),
+          borderWidth:2, borderRadius:6 }],
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ display:false } },
+        scales:{ y:{ beginAtZero:true, max:100 }, x:{ ticks:{ font:{ size:9 }, maxRotation:30 } } },
+      },
+    });
+  }
+
+  // Table: violations by road
+  const violTbody = document.getElementById('ind-viol-tbody');
+  if (violTbody) {
+    violTbody.innerHTML = (viol.top_roads || []).map(r => `
+      <tr>
+        <td style="font-weight:600">${r.road}</td>
+        <td><span style="color:var(--red);font-weight:700">${r.count.toLocaleString()}</span></td>
+      </tr>`).join('');
+  }
+
+  // Table: congested roads
+  const congTbody = document.getElementById('ind-cong-tbody');
+  if (congTbody) {
+    const congRoads = rt.congested_roads || [];
+    if (congRoads.length === 0) {
+      congTbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:20px">✅ Không có tuyến đường tắc nghẽn</td></tr>';
+    } else {
+      congTbody.innerHTML = congRoads.map(r => `
+        <tr>
+          <td style="font-weight:600">${r.road || '-'}</td>
+          <td style="font-size:12px;color:var(--text3)">${r.district || '-'}</td>
+          <td style="color:var(--red);font-weight:700">${r.speed || 0} km/h</td>
+          <td>${r.delay || 0} phút</td>
+          <td><span style="background:${(r.risk||0)>30?'#fee2e2':(r.risk||0)>15?'#fef3c7':'#dcfce7'};color:${(r.risk||0)>30?'#dc2626':(r.risk||0)>15?'#d97706':'#16a34a'};padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700">${r.risk || 0}</span></td>
+        </tr>`).join('');
+    }
+  }
+};
