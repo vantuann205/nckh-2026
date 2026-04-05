@@ -83,6 +83,9 @@ async function navigate(page, navEl) {
       updateMonitor();
       if (window.renderMonitorCharts) renderMonitorCharts();
       break;
+    case 'analysis':
+      if (window.renderAnalysis) renderAnalysis();
+      break;
     case 'prediction':
       setTimeout(() => { if (window._initPredictionPage) window._initPredictionPage(); }, 100);
       break;
@@ -354,6 +357,9 @@ async function updatePageData(page) {
       break;
     case 'indicators':
       if (window.renderIndicators) renderIndicators();
+      break;
+    case 'analysis':
+      if (window.renderAnalysis) renderAnalysis();
       break;
     case 'monitor':
       updateMonitor();

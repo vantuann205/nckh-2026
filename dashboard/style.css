@@ -185,6 +185,12 @@ h1, h2, h3, .display-text { font-family: var(--font-display); font-weight: 800; 
 .kpi-card:hover { background: var(--surface-container-high); transform: translateY(-2px); box-shadow: 0 12px 24px rgba(0,0,0,0.3); z-index: 10;}
 .kpi-label { font-size: 12px; color: var(--on-surface-variant); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
 .kpi-value { font-family: var(--font-display); font-size: 36px; font-weight: 800; color: var(--on-surface); line-height: 1; }
+.kpi-sub { font-size: 11px; color: var(--on-surface-variant); margin-top: 4px; }
+.kpi-card.kpi-danger { border-left: 3px solid #ef4444; }
+.kpi-card.kpi-warn   { border-left: 3px solid #f59e0b; }
+.kpi-card.kpi-ok     { border-left: 3px solid #22c55e; }
+.kpi-card.kpi-info   { border-left: 3px solid #3b82f6; }
+.section-label { font-size: 13px; font-weight: 700; color: var(--on-surface); text-transform: uppercase; letter-spacing: 0.06em; padding: 4px 0 8px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
 /* Nested units */
 .kpi-value span { font-family: var(--font-body); font-size: 14px; font-weight: 600; color: var(--on-surface-variant); margin-left: 4px; }
 

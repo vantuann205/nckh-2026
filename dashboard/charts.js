@@ -739,3 +739,207 @@ window.renderIndicators = async function () {
     }
   }
 };
+
+// ── Phân tích & Dự báo (trang tổng hợp) ──────────────────────────────────────
+
+window.renderAnalysis = async function () {
+  const colors = getChartColors();
+  const fmt = n => Number(n || 0).toLocaleString();
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.innerHTML = val; };
+
+  // Fetch all data in parallel
+  let indData, predData;
+  try {
+    const [indRes, predRes] = await Promise.all([
+      fetch(`${API_BASE}/traffic/indicators`),
+      fetch(`${API_BASE}/traffic/predict?minutes=5`),
+    ]);
+    indData  = indRes.ok  ? await indRes.json()  : null;
+    predData = predRes.ok ? await predRes.json() : null;
+  } catch (e) {
+    console.error('Analysis fetch error:', e);
+    return;
+  }
+
+  if (!indData) return;
+
+  const rt   = indData.realtime   || {};
+  const viol = indData.violations || {};
+  const fuel = indData.fuel       || {};
+  const cong = indData.congestion_patterns || {};
+  const summary = DB.summary || {};
+
+  // ── SECTION 1: Trạng thái realtime ──
+  set('an-congested', fmt(rt.congested_count));
+  set('an-slow',      fmt(rt.slow_count));
+  set('an-normal',    fmt(rt.normal_count));
+  set('an-avgspeed',  summary.avg_speed || '-');
+
+  // ── SECTION 2: Vi phạm & Nhiên liệu ──
+  set('an-speeding',      fmt(viol.total_speeding));
+  set('an-speeding-rate', `${viol.speeding_rate_pct || 0}% tổng phương tiện`);
+  set('an-lowfuel',       fmt(fuel.total_low_fuel));
+  set('an-lowfuel-rate',  `${fuel.low_fuel_rate_pct || 0}% tổng phương tiện`);
+  set('an-fuel-avg',      fuel.avg_fuel_pct || '-');
+  set('an-range',         fmt(fuel.avg_range_km));
+
+  // Chart: vi phạm theo loại xe
+  const ctxVtype = document.getElementById('chart-an-vtype');
+  if (ctxVtype && Object.keys(viol.by_vehicle_type || {}).length) {
+    const labels = Object.keys(viol.by_vehicle_type);
+    const vals   = Object.values(viol.by_vehicle_type);
+    destroyChart('an-vtype');
+    chartInstances['an-vtype'] = new Chart(ctxVtype, {
+      type: 'doughnut',
+      data: { labels, datasets: [{ data: vals, backgroundColor: colors.palette.map(c => c+'cc'), borderColor:'#fff', borderWidth:2 }] },
+      options: { responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ position:'right', labels:{ font:{size:11}, usePointStyle:true, boxWidth:6 } },
+          tooltip:{ callbacks:{ label: ctx => `${ctx.label}: ${ctx.parsed.toLocaleString()} (${((ctx.parsed/vals.reduce((a,b)=>a+b,0))*100).toFixed(1)}%)` } } } },
+    });
+  }
+
+  // Chart: phân bổ nhiên liệu
+  const ctxFuel = document.getElementById('chart-an-fuel');
+  if (ctxFuel && Object.keys(fuel.distribution || {}).length) {
+    const order = ['0-20%','20-40%','40-60%','60-80%','80-100%'];
+    const labels = order.filter(k => fuel.distribution[k]);
+    const vals   = labels.map(k => fuel.distribution[k] || 0);
+    const fuelColors = ['#ef4444','#f97316','#f59e0b','#22c55e','#10b981'];
+    destroyChart('an-fuel');
+    chartInstances['an-fuel'] = new Chart(ctxFuel, {
+      type: 'bar',
+      data: { labels, datasets: [{ label:'Số xe', data:vals,
+        backgroundColor: fuelColors.map(c=>c+'cc'), borderColor:fuelColors, borderWidth:2, borderRadius:6 }] },
+      options: { responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ display:false },
+          tooltip:{ callbacks:{ label: ctx => `${ctx.parsed.y.toLocaleString()} xe` } } },
+        scales:{ y:{ beginAtZero:true, ticks:{ callback: v=>v.toLocaleString() } }, x:{ grid:{ display:false } } } },
+    });
+  }
+
+  // ── SECTION 3: Hotspot ──
+  const hotspots = cong.hotspot_roads || [];
+  const ctxHot = document.getElementById('chart-an-hotspot');
+  if (ctxHot && hotspots.length) {
+    const wrapper = ctxHot.closest('.chart-body');
+    if (wrapper) wrapper.style.height = Math.max(480, hotspots.length * 22) + 'px';
+    const barColors = hotspots.map(h => h.high_pct > 35 ? colors.red : h.high_pct > 30 ? colors.yellow : colors.green);
+    destroyChart('an-hotspot');
+    chartInstances['an-hotspot'] = new Chart(ctxHot, {
+      type: 'bar',
+      data: {
+        labels: hotspots.map(h => h.road_name),
+        datasets: [{ label:'High congestion %', data: hotspots.map(h => h.high_pct),
+          backgroundColor: barColors.map(c=>c+'cc'), borderColor: barColors, borderWidth:1, borderRadius:3 }],
+      },
+      options: { indexAxis:'y', responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ display:false },
+          tooltip:{ callbacks:{ label: ctx => `${ctx.parsed.x}% tắc nghẽn cao | Delay TB: ${hotspots[ctx.dataIndex]?.avg_delay} phút` } } },
+        scales:{ x:{ beginAtZero:true, max:50, title:{ display:true, text:'% High congestion' } },
+          y:{ ticks:{ font:{ size:10, family:'JetBrains Mono' } } } } },
+    });
+  }
+
+  // Chart: delay
+  const delayRoads = cong.top_delay_roads || [];
+  const ctxDelay = document.getElementById('chart-an-delay');
+  if (ctxDelay && delayRoads.length) {
+    const wrapper = ctxDelay.closest('.chart-body');
+    if (wrapper) wrapper.style.height = Math.max(480, delayRoads.length * 22) + 'px';
+    const dColors = delayRoads.map(r => r.avg_delay > 12 ? colors.red : r.avg_delay > 8 ? colors.yellow : colors.green);
+    destroyChart('an-delay');
+    chartInstances['an-delay'] = new Chart(ctxDelay, {
+      type: 'bar',
+      data: {
+        labels: delayRoads.map(r => r.road),
+        datasets: [{ label:'Delay TB (phút)', data: delayRoads.map(r => r.avg_delay),
+          backgroundColor: dColors.map(c=>c+'cc'), borderColor: dColors, borderWidth:2, borderRadius:4 }],
+      },
+      options: { indexAxis:'y', responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ display:false },
+          tooltip:{ callbacks:{ label: ctx => `${ctx.parsed.x} phút trễ trung bình` } } },
+        scales:{ x:{ beginAtZero:true, title:{ display:true, text:'phút' } },
+          y:{ ticks:{ font:{ size:10 } } } } },
+    });
+  }
+
+  // ── SECTION 4: ML Prediction ──
+  if (predData && predData.predictions) {
+    const preds = predData.predictions;
+    const danger = preds.filter(p => p.congestion_probability >= 0.5).length;
+    const safe   = preds.filter(p => p.congestion_probability < 0.3).length;
+    const avgProb = preds.length ? Math.round(preds.reduce((s,p) => s + p.congestion_probability, 0) / preds.length * 100) : 0;
+    const avgDelay = preds.length ? Math.round(preds.reduce((s,p) => s + p.predicted_delay_minutes, 0) / preds.length * 10) / 10 : 0;
+
+    set('an-pred-danger', fmt(danger));
+    set('an-pred-safe',   fmt(safe));
+    set('an-pred-avg',    avgProb + '%');
+    set('an-pred-delay',  avgDelay);
+
+    // Chart: prediction bar
+    const sorted = [...preds].sort((a,b) => b.congestion_probability - a.congestion_probability);
+    const ctxPred = document.getElementById('chart-an-pred');
+    if (ctxPred && sorted.length) {
+      const wrapper = ctxPred.closest('.chart-body');
+      if (wrapper) wrapper.style.height = Math.max(400, sorted.length * 22) + 'px';
+      const pColors = sorted.map(p =>
+        p.congestion_probability >= 0.7 ? colors.red :
+        p.congestion_probability >= 0.4 ? colors.yellow : colors.green
+      );
+      destroyChart('an-pred');
+      chartInstances['an-pred'] = new Chart(ctxPred, {
+        type: 'bar',
+        data: {
+          labels: sorted.map(p => p.location_key || p.road_id || ''),
+          datasets: [{ label:'Xác suất tắc (%)', data: sorted.map(p => Math.round(p.congestion_probability * 100)),
+            backgroundColor: pColors.map(c=>c+'cc'), borderColor: pColors, borderWidth:1, borderRadius:3 }],
+        },
+        options: { indexAxis:'y', responsive:true, maintainAspectRatio:false,
+          plugins:{ legend:{ display:false },
+            tooltip:{ callbacks:{ label: ctx => {
+              const p = sorted[ctx.dataIndex];
+              return `Xác suất: ${ctx.parsed.x}% | Delay: ${p.predicted_delay_minutes} phút | ${p.predicted_status === 'congested' ? 'Sắp tắc' : 'Bình thường'}`;
+            } } } },
+          scales:{ x:{ beginAtZero:true, max:100, title:{ display:true, text:'%' } },
+            y:{ ticks:{ font:{ size:10, family:'JetBrains Mono' } } } } },
+      });
+    }
+  }
+
+  // ── SECTION 5: Congested roads table ──
+  const congTbody = document.getElementById('an-cong-tbody');
+  if (congTbody) {
+    const congRoads = rt.congested_roads || [];
+    if (!congRoads.length) {
+      congTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Không có tuyến đường tắc nghẽn ngay lúc này</td></tr>';
+    } else {
+      congTbody.innerHTML = congRoads.map(r => {
+        const speed = parseFloat(r.speed || 0);
+        const risk  = parseFloat(r.risk  || 0);
+        const rec   = speed < 10 ? 'Tránh tuyến này' : speed < 20 ? 'Cân nhắc tuyến khác' : 'Theo dõi';
+        const recColor = speed < 10 ? '#ef4444' : speed < 20 ? '#f59e0b' : '#22c55e';
+        return `<tr>
+          <td style="font-weight:600">${r.road || '-'}</td>
+          <td style="font-size:12px;color:var(--text3)">${r.district || '-'}</td>
+          <td><span style="color:#ef4444;font-weight:700">${speed} km/h</span></td>
+          <td>${r.delay || 0} phút</td>
+          <td><span style="background:${risk>30?'#fee2e2':risk>15?'#fef3c7':'#dcfce7'};color:${risk>30?'#dc2626':risk>15?'#d97706':'#16a34a'};padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700">${risk}</span></td>
+          <td style="color:${recColor};font-weight:600;font-size:12px">${rec}</td>
+        </tr>`;
+      }).join('');
+    }
+  }
+
+  // ── SECTION 6: Violation table ──
+  const violTbody = document.getElementById('an-viol-tbody');
+  if (violTbody) {
+    const topRoads = viol.top_roads || [];
+    const totalViol = viol.total_speeding || 1;
+    violTbody.innerHTML = topRoads.map(r => `
+      <tr>
+        <td style="font-weight:600">${r.road}</td>
+        <td><span style="color:#ef4444;font-weight:700">${r.count.toLocaleString()}</span></td>
+        <td>${((r.count / totalViol) * 100).toFixed(1)}%</td>
+      </tr>`).join('');
+  }
+};
