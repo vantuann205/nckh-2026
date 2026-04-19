@@ -53,6 +53,64 @@ ENGINEERED_FEATURES = [
     "very_low_speed_flag",# binary: speed < 10
 ]
 
+# Forecast target standards (recommended order)
+FORECAST_TARGETS: Dict[str, Dict[str, str]] = {
+    "congestion_level": {
+        "task": "classification",
+        "note": "Low / Moderate / High",
+        "model_hint": "XGBoost / RandomForest",
+    },
+    "estimated_delay_minutes": {
+        "task": "regression",
+        "note": "Delay prediction in minutes",
+        "model_hint": "XGBoost Regressor",
+    },
+    "travel_time_minutes": {
+        "task": "regression_time_series",
+        "note": "ETA/travel-time optimization target",
+        "model_hint": "XGBoost + time-lag or LSTM",
+    },
+}
+
+
+def validate_training_targets(df: pd.DataFrame) -> None:
+    """Hard quality gate: require aligned targets before training.
+
+    This enforces internal consistency expected by the forecast standard:
+    - `congestion_level` exists and matches speed thresholds.
+    - `estimated_delay_minutes` and `travel_time_minutes` are non-negative.
+    - `travel_time_minutes` is always >= `estimated_delay_minutes`.
+    """
+    required = ["speed_kmph", "congestion_level", "estimated_delay_minutes", "travel_time_minutes"]
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required target columns: {missing}")
+
+    speed = pd.to_numeric(df["speed_kmph"], errors="coerce")
+    expected = pd.Series("Low", index=df.index)
+    expected[(speed < 40) & (speed >= 20)] = "Moderate"
+    expected[speed < 20] = "High"
+
+    level = df["congestion_level"].astype(str)
+    delay = pd.to_numeric(df["estimated_delay_minutes"], errors="coerce")
+    travel = pd.to_numeric(df["travel_time_minutes"], errors="coerce")
+
+    invalid = (
+        speed.isna()
+        | (level != expected)
+        | delay.isna()
+        | travel.isna()
+        | (delay < 0)
+        | (travel < 0)
+        | (travel < delay)
+    )
+
+    bad = int(invalid.sum())
+    if bad > 0:
+        raise ValueError(
+            f"Training data is not 100% target-aligned: {bad}/{len(df)} rows violate forecast standard"
+        )
+
 
 def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     """Tạo thêm features từ raw data để tăng accuracy."""
@@ -94,6 +152,8 @@ def train_model_once(
 
     if processed_df.empty:
         raise ValueError("Cannot train model from empty processed dataset")
+
+    validate_training_targets(processed_df)
 
     X = _engineer_features(processed_df)
     y = (
@@ -189,15 +249,55 @@ def load_model(model_path: Path = MODEL_PATH) -> Optional[Dict]:
     return payload
 
 
+def _resolve_feature_columns(model_bundle: Dict, model) -> List[str]:
+    """Resolve expected feature columns from runtime model metadata.
+
+    Priority:
+    1) model.feature_names_in_ (most reliable for sklearn pipelines)
+    2) saved payload field: feature_columns
+    3) current engineered feature list
+    """
+    names = getattr(model, "feature_names_in_", None)
+    if names is not None:
+        cols = [str(c) for c in list(names)]
+        if cols:
+            return cols
+
+    payload_cols = model_bundle.get("feature_columns")
+    if isinstance(payload_cols, list) and payload_cols:
+        return [str(c) for c in payload_cols]
+
+    return list(ENGINEERED_FEATURES)
+
+
+def _build_compatible_feature_frame(rows: List[dict], expected_cols: List[str]) -> pd.DataFrame:
+    """Build a feature frame compatible with an existing persisted model.
+
+    This keeps prediction stable across model versions trained with different
+    feature sets (legacy base features vs engineered features).
+    """
+    raw_df = pd.DataFrame(rows)
+    engineered_df = _engineer_features(raw_df)
+
+    out = pd.DataFrame(index=engineered_df.index)
+    for col in expected_cols:
+        if col in engineered_df.columns:
+            out[col] = engineered_df[col]
+        elif col in raw_df.columns:
+            out[col] = pd.to_numeric(raw_df[col], errors="coerce").fillna(0)
+        else:
+            # Preserve column shape for old models that expect now-missing inputs.
+            out[col] = 0.0
+    return out
+
+
 def predict_probability(model_bundle: Dict, rows: List[dict]) -> List[float]:
     if not rows:
         return []
 
-    df = pd.DataFrame(rows)
     model = model_bundle["model"]
-
-    # Dùng feature engineering giống lúc train
-    X = _engineer_features(df)
+    expected_cols = _resolve_feature_columns(model_bundle, model)
+    X = _build_compatible_feature_frame(rows, expected_cols)
 
     if hasattr(model, "predict_proba"):
         probs = model.predict_proba(X)

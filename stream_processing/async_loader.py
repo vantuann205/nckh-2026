@@ -126,6 +126,89 @@ def _refresh_now():
     _NOW_ISO = datetime.now(timezone.utc).isoformat()
 
 
+def _first_non_whitespace_byte(data: bytes) -> Optional[int]:
+    for b in data:
+        if b not in (9, 10, 13, 32):
+            return b
+    return None
+
+
+def _parse_object_stream(data: bytes) -> List[dict]:
+    """Fallback parser for malformed JSON arrays (e.g. missing opening '[')."""
+    out: List[dict] = []
+    obj_buf = bytearray()
+    depth = 0
+    in_string = False
+    escape = False
+    started = False
+
+    for b in data:
+        if not started:
+            # Skip whitespace, commas, and array brackets while searching for object start.
+            if b in (9, 10, 13, 32, 44, 91, 93):
+                continue
+            if b != 123:  # '{'
+                continue
+            started = True
+            depth = 1
+            obj_buf.clear()
+            obj_buf.append(b)
+            continue
+
+        obj_buf.append(b)
+
+        if in_string:
+            if escape:
+                escape = False
+            elif b == 92:  # '\\'
+                escape = True
+            elif b == 34:  # '"'
+                in_string = False
+            continue
+
+        if b == 34:  # '"'
+            in_string = True
+            continue
+        if b == 123:  # '{'
+            depth += 1
+        elif b == 125:  # '}'
+            depth -= 1
+            if depth == 0:
+                obj = orjson.loads(bytes(obj_buf))
+                if isinstance(obj, dict):
+                    out.append(obj)
+                obj_buf.clear()
+                started = False
+
+    if started or depth != 0:
+        raise ValueError("Unterminated JSON object stream")
+
+    return out
+
+
+def _read_records(file_path: Path) -> List[dict]:
+    raw_bytes = file_path.read_bytes()
+    try:
+        raw_list = orjson.loads(raw_bytes)
+    except Exception as e:
+        first = _first_non_whitespace_byte(raw_bytes)
+        # Common corruption observed in very large files: missing opening '['.
+        if first == 123:  # '{'
+            logger.warning(
+                "Malformed JSON array in %s (starts with '{'). Falling back to object-stream parser.",
+                file_path.name,
+            )
+            raw_list = _parse_object_stream(raw_bytes)
+        else:
+            raise ValueError(f"Invalid JSON format in {file_path.name}: {e}") from e
+
+    if isinstance(raw_list, dict):
+        return [raw_list]
+    if not isinstance(raw_list, list):
+        raise ValueError(f"Top-level JSON in {file_path.name} must be an array")
+    return raw_list
+
+
 def _normalize_batch(records: list) -> List[dict]:
     _refresh_now()
     now = _NOW_ISO
@@ -429,14 +512,10 @@ def _load_file(file_path: Path, redis_client, broadcast_fn: Optional[Callable] =
 
     if records is None:
         try:
-            raw_bytes = file_path.read_bytes()
-            raw_list  = orjson.loads(raw_bytes)
-            del raw_bytes
-            if not isinstance(raw_list, list):
-                raw_list = []
+            raw_list = _read_records(file_path)
         except Exception as e:
             logger.error("Failed to read %s: %s", file_path, e)
-            return 0
+            raise
 
         t_read = time.monotonic() - t0
         logger.info("Read %s: %d records in %.2fs (%.0f rec/s)",
@@ -538,14 +617,25 @@ def load_all_data(redis_client, broadcast_fn: Optional[Callable] = None):
         rc = redis_client.client
         existing = int(rc.scard("traffic:unique_roads") or 0)
         if existing > 0:
+            def _state_ok(f: Path) -> bool:
+                meta = loaded_files.get(f.name, {})
+                if meta.get("mtime") != f.stat().st_mtime:
+                    return False
+                if not meta.get("completed"):
+                    return False
+                count = int(meta.get("count", 0) or 0)
+                # Guard against stale state where a non-empty file was incorrectly saved with 0 records.
+                if count == 0 and f.stat().st_size > 16:
+                    return False
+                return True
+
             all_done = all(
-                loaded_files.get(f.name, {}).get("mtime") == f.stat().st_mtime and
-                loaded_files.get(f.name, {}).get("completed")
+                _state_ok(f)
                 for f in files
             )
             if all_done:
                 logger.info("Redis has %d roads, all files loaded — fast path", existing)
-                total_loaded = sum(v.get("count", 0) for v in loaded_files.values())
+                total_loaded = sum(int(loaded_files.get(f.name, {}).get("count", 0) or 0) for f in files)
                 rc.hset("traffic:summary", "total_vehicles", total_loaded)
                 _recompute_road_summary(redis_client)
                 PROGRESS.status = "completed"
@@ -592,9 +682,17 @@ def load_all_data(redis_client, broadcast_fn: Optional[Callable] = None):
                 "mtime": f.stat().st_mtime,
                 "count": count,
                 "completed": True,
+                "error": "",
             }
             _save_state({"loaded_files": loaded_files})
         except Exception as e:
+            loaded_files[f.name] = {
+                "mtime": f.stat().st_mtime,
+                "count": 0,
+                "completed": False,
+                "error": str(e),
+            }
+            _save_state({"loaded_files": loaded_files})
             errors.append(f"{f.name}: {e}")
             logger.error("Error loading %s: %s", f.name, e)
 
@@ -639,10 +737,18 @@ def load_single_file(file_path: Path, redis_client, broadcast_fn: Optional[Calla
             "mtime": file_path.stat().st_mtime,
             "count": count,
             "completed": True,
+            "error": "",
         }
         _save_state({"loaded_files": loaded_files})
         PROGRESS.complete()
     except Exception as e:
+        loaded_files[filename] = {
+            "mtime": file_path.stat().st_mtime,
+            "count": 0,
+            "completed": False,
+            "error": str(e),
+        }
+        _save_state({"loaded_files": loaded_files})
         logger.error("File watcher load error: %s", e)
         PROGRESS.fail(str(e))
 
