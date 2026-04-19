@@ -460,6 +460,27 @@ PAGES.prediction = () => `
 
   <div class="forecast-insights" id="pred-insights"></div>
 
+  <div class="section-label">Gợi ý tuyến nên đi tiếp theo từ vị trí hiện tại</div>
+  <div class="forecast-route-controls">
+    <div class="forecast-route-field forecast-route-field-wide">
+      <div class="forecast-field-label">Vị trí hiện tại (chọn tuyến đang đứng)</div>
+      <input id="pred-current-road-input" class="forecast-input" list="pred-current-road-list" placeholder="Nhập hoặc chọn road_id hiện tại">
+      <datalist id="pred-current-road-list"></datalist>
+    </div>
+    <button class="btn-primary" onclick="suggestNextRoutes()">Gợi ý nên đi tiếp</button>
+  </div>
+
+  <div class="table-container" style="margin-bottom:18px">
+    <table class="forecast-table">
+      <thead><tr>
+        <th>#</th><th>Tuyến đề xuất</th><th>Quận</th><th>Cách vị trí hiện tại</th><th>Tốc độ hiện tại</th><th>Xác suất tắc</th><th>Delay dự báo</th><th>Điểm khuyến nghị</th><th>Lý do chọn</th>
+      </tr></thead>
+      <tbody id="pred-next-route-tbody">
+        <tr><td colspan="9" style="text-align:center;padding:18px;color:var(--text3)">Chọn vị trí hiện tại để nhận gợi ý tuyến nên đi tiếp.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
   <div class="charts-grid">
     <div class="chart-card">
       <div class="chart-header"><h3>Phân bố xác suất tắc nghẽn</h3><span class="chart-badge live">ML</span></div>
@@ -481,51 +502,6 @@ PAGES.prediction = () => `
       <div class="chart-header"><h3>Dự báo theo giờ</h3><span class="chart-badge live">FORECAST</span></div>
       <div class="chart-body"><canvas id="chart-pred-hourly"></canvas></div>
     </div>
-  </div>
-
-  <div class="section-label">Gợi ý tuyến tránh tắc</div>
-  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
-    <div style="flex:1;min-width:220px">
-      <div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:6px;text-transform:uppercase">Điểm đi</div>
-      <select id="pred-route-from" class="forecast-select" style="width:100%"><option value="">-- Chọn tuyến --</option></select>
-    </div>
-    <div style="flex:1;min-width:220px">
-      <div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:6px;text-transform:uppercase">Điểm đến</div>
-      <select id="pred-route-to" class="forecast-select" style="width:100%"><option value="">-- Chọn tuyến --</option></select>
-    </div>
-    <button class="btn-primary" onclick="loadRouteSuggestions()">Gợi ý tuyến</button>
-  </div>
-
-  <div class="table-container" style="margin-bottom:18px">
-    <table class="forecast-table">
-      <thead><tr>
-        <th>#</th><th>Loại tuyến</th><th>Chuỗi đường</th><th>Khoảng cách</th><th>Tốc độ TB</th><th>Delay</th><th>Tổng thời gian</th><th>Rủi ro</th><th>Điểm tuyến</th><th>Khuyến nghị</th>
-      </tr></thead>
-      <tbody id="pred-route-tbody">
-        <tr><td colspan="10" style="text-align:center;padding:18px;color:var(--text3)">Chưa có gợi ý tuyến. Hãy chọn điểm đi và điểm đến.</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <div class="section-label">Gợi ý tuyến nên đi tiếp theo từ vị trí hiện tại</div>
-  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
-    <div style="flex:1;min-width:260px">
-      <div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:6px;text-transform:uppercase">Vị trí hiện tại (chọn tuyến đang đứng)</div>
-      <input id="pred-current-road-input" class="forecast-input" list="pred-current-road-list" placeholder="Nhập hoặc chọn road_id hiện tại" style="width:100%">
-      <datalist id="pred-current-road-list"></datalist>
-    </div>
-    <button class="btn-primary" onclick="suggestNextRoutes()">Gợi ý nên đi tiếp</button>
-  </div>
-
-  <div class="table-container" style="margin-bottom:18px">
-    <table class="forecast-table">
-      <thead><tr>
-        <th>#</th><th>Tuyến đề xuất</th><th>Quận</th><th>Cách vị trí hiện tại</th><th>Tốc độ hiện tại</th><th>Xác suất tắc</th><th>Delay dự báo</th><th>Điểm khuyến nghị</th><th>Lý do chọn</th>
-      </tr></thead>
-      <tbody id="pred-next-route-tbody">
-        <tr><td colspan="9" style="text-align:center;padding:18px;color:var(--text3)">Chọn vị trí hiện tại để nhận gợi ý tuyến nên đi tiếp.</td></tr>
-      </tbody>
-    </table>
   </div>
 
   <div class="table-container forecast-table-shell">

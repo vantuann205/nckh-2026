@@ -486,6 +486,35 @@ h1, h2, h3, .display-text { font-family: var(--font-display); font-weight: 800; 
   letter-spacing: -0.01em;
   color: var(--on-surface);
 }
+.forecast-route-controls {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+.forecast-route-field {
+  flex: 1;
+  min-width: 220px;
+}
+.forecast-route-field-wide {
+  min-width: 260px;
+}
+.forecast-field-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text3);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.forecast-route-field .forecast-input,
+.forecast-route-field .forecast-select {
+  width: 100%;
+}
+.forecast-route-controls .btn-primary {
+  min-height: 38px;
+}
 .forecast-input,
 .forecast-select {
   min-height: 38px;
@@ -511,6 +540,16 @@ h1, h2, h3, .display-text { font-family: var(--font-display); font-weight: 800; 
   background: rgba(255,255,255,0.06);
   box-shadow: 0 0 0 3px rgba(56,189,248,0.15);
 }
+.forecast-input.is-selected,
+.forecast-select.is-selected {
+  border-color: rgba(16,185,129,0.55);
+  background: rgba(16,185,129,0.08);
+  box-shadow: 0 0 0 2px rgba(16,185,129,0.12);
+}
+.forecast-select option {
+  color: #0b1326;
+  background: #e8eefc;
+}
 .forecast-table {
   border-collapse: separate;
   border-spacing: 0;
@@ -526,6 +565,27 @@ h1, h2, h3, .display-text { font-family: var(--font-display); font-weight: 800; 
 }
 .forecast-table tbody tr:hover td {
   background: rgba(56,189,248,0.06);
+}
+.forecast-next-row {
+  cursor: pointer;
+}
+.forecast-next-row td {
+  transition: background-color 0.15s ease;
+}
+.forecast-next-row:hover td {
+  background: rgba(16,185,129,0.10);
+}
+.forecast-next-row.is-picked td {
+  background: rgba(16,185,129,0.18);
+}
+.forecast-next-select-hint {
+  margin-top: 6px;
+  font-size: 10px;
+  font-family: var(--mono);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #86efac;
 }
 .forecast-table td,
 .forecast-table th {
@@ -883,6 +943,7 @@ tr:hover td { background: rgba(56,189,248,0.05); }
   .charts-grid { grid-template-columns: 1fr; }
   .chart-card.full-width { grid-column: span 1; }
   .forecast-toolbar { align-items: stretch; }
+  .forecast-route-controls { align-items: stretch; }
   .forecast-input, .forecast-select { width: 100%; }
   .breadcrumbs { font-size: var(--fs-13); }
 }

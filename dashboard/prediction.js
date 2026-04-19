@@ -184,7 +184,7 @@ function populateRouteSelectors(roads) {
   const toSel = document.getElementById('pred-route-to');
   const currentInput = document.getElementById('pred-current-road-input');
   const currentList = document.getElementById('pred-current-road-list');
-  if (!fromSel || !toSel) return;
+  if (!currentInput && !currentList && !fromSel && !toSel) return;
 
   const normalized = (roads || [])
     .map((r) => ({
@@ -205,16 +205,16 @@ function populateRouteSelectors(roads) {
     return a.district.localeCompare(b.district);
   });
 
-  const currentFrom = fromSel.value;
-  const currentTo = toSel.value;
+  const currentFrom = fromSel?.value || '';
+  const currentTo = toSel?.value || '';
   const currentRoad = currentInput?.value || '';
 
   const html = ['<option value="">-- Chọn tuyến --</option>']
     .concat(options.map((o) => `<option value="${o.road_id}">${o.road_name} (${o.district})</option>`))
     .join('');
 
-  fromSel.innerHTML = html;
-  toSel.innerHTML = html;
+  if (fromSel) fromSel.innerHTML = html;
+  if (toSel) toSel.innerHTML = html;
 
   if (currentList) {
     currentList.innerHTML = options
@@ -222,9 +222,41 @@ function populateRouteSelectors(roads) {
       .join('');
   }
 
-  if (currentFrom) fromSel.value = currentFrom;
-  if (currentTo) toSel.value = currentTo;
+  if (fromSel && currentFrom) fromSel.value = currentFrom;
+  if (toSel && currentTo) toSel.value = currentTo;
   if (currentInput && currentRoad) currentInput.value = currentRoad;
+
+  _bindRouteSelectionEvents();
+  _syncRouteControlClasses();
+}
+
+function _setRouteControlState(el) {
+  if (!el) return;
+  const hasValue = String(el.value || '').trim().length > 0;
+  el.classList.toggle('is-selected', hasValue);
+}
+
+function _syncRouteControlClasses() {
+  _setRouteControlState(document.getElementById('pred-route-from'));
+  _setRouteControlState(document.getElementById('pred-route-to'));
+  _setRouteControlState(document.getElementById('pred-current-road-input'));
+}
+
+function _bindRouteSelectionEvents() {
+  const controls = [
+    document.getElementById('pred-route-from'),
+    document.getElementById('pred-route-to'),
+    document.getElementById('pred-current-road-input'),
+  ].filter(Boolean);
+
+  controls.forEach((el) => {
+    if (el.dataset.routeUiBound === '1') return;
+
+    const eventName = el.tagName === 'SELECT' ? 'change' : 'input';
+    el.addEventListener(eventName, _syncRouteControlClasses);
+    el.addEventListener('blur', _syncRouteControlClasses);
+    el.dataset.routeUiBound = '1';
+  });
 }
 
 function _clampNum(v, min, max) {
@@ -405,7 +437,8 @@ window.suggestNextRoutes = function () {
   tbody.innerHTML = top.map((r, idx) => {
     const scoreColor = r.score >= 70 ? '#22c55e' : r.score >= 45 ? '#f59e0b' : '#ef4444';
     const distanceText = Number.isFinite(r.distance_km) ? `${r.distance_km.toFixed(2)} km` : 'Không rõ';
-    return `<tr>
+    const roadIdAttr = String(r._key || '').replace(/"/g, '&quot;');
+    return `<tr class="forecast-next-row" data-road-id="${roadIdAttr}">
       <td>${idx + 1}</td>
       <td style="font-weight:700">${r.road_name || r.road_id || r._key}</td>
       <td>${r.district || '-'}</td>
@@ -417,7 +450,41 @@ window.suggestNextRoutes = function () {
       <td>${r.reason}</td>
     </tr>`;
   }).join('');
+
+  _bindNextRouteSelection(currentRoad._key);
 };
+
+function _bindNextRouteSelection(currentRoadId) {
+  const tbody = document.getElementById('pred-next-route-tbody');
+  if (!tbody) return;
+
+  tbody.querySelectorAll('.forecast-next-row').forEach((row) => {
+    if (row.dataset.pickBound === '1') return;
+
+    row.addEventListener('click', () => {
+      const pickedRoadId = String(row.dataset.roadId || '').trim();
+      if (!pickedRoadId) return;
+
+      const fromSel = document.getElementById('pred-route-from');
+      const toSel = document.getElementById('pred-route-to');
+
+      if (fromSel && !String(fromSel.value || '').trim()) {
+        fromSel.value = String(currentRoadId || '');
+      }
+      if (toSel) {
+        toSel.value = pickedRoadId;
+      }
+
+      tbody.querySelectorAll('.forecast-next-row.is-picked').forEach((item) => {
+        item.classList.remove('is-picked');
+      });
+      row.classList.add('is-picked');
+      _syncRouteControlClasses();
+    });
+
+    row.dataset.pickBound = '1';
+  });
+}
 
 window.loadRouteSuggestions = async function () {
   const fromRoad = document.getElementById('pred-route-from')?.value;
@@ -832,5 +899,7 @@ window._initPredictionPage = function () {
     horizonSel.value = '10';
   }
   populateRouteSelectors((window.DB?.state?.roads) || []);
+  _bindRouteSelectionEvents();
+  _syncRouteControlClasses();
   loadPredictions();
 };

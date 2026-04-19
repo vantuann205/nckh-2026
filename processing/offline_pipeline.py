@@ -405,8 +405,12 @@ def _validate_and_enforce_target_consistency(df: pd.DataFrame, strict: bool = Tr
 
     # Enforce ETA/travel-time always >= delay
     min_travel = out["estimated_delay_minutes"] + 1.0
-    out["travel_time_minutes"] = out[["travel_time_minutes", min_travel]].max(axis=1).round(1)
-    out["eta_minutes"] = out[["eta_minutes", out["travel_time_minutes"]]].max(axis=1).round(1)
+    out["travel_time_minutes"] = pd.concat(
+        [out["travel_time_minutes"], min_travel], axis=1
+    ).max(axis=1).round(1)
+    out["eta_minutes"] = pd.concat(
+        [out["eta_minutes"], out["travel_time_minutes"]], axis=1
+    ).max(axis=1).round(1)
 
     inconsistent = (
         (out["congestion_level"] != expected_level)
