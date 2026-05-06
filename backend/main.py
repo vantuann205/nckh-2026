@@ -380,38 +380,19 @@ async def startup():
     _pubsub_thread.start()
 
     # Start fast data loader in background (non-blocking)
-    # Throttle: broadcast at most once per second during loading
+    # Throttle: broadcast at most once per 0.3s during loading
     _last_broadcast_ts = [0.0]
 
     def _do_broadcast():
         if not (_main_loop and _main_loop.is_running()):
             return
         now = time.time()
-        if now - _last_broadcast_ts[0] < 1.0:
+        if now - _last_broadcast_ts[0] < 0.3:
             return
         _last_broadcast_ts[0] = now
         try:
             progress = PROGRESS.to_dict()
-            # Update only road-level fields; keep accumulated counters from loader.
-            if redis_client:
-                roads = redis_client.get_all_roads()
-                if roads:
-                    total = len(roads)
-                    avg_spd = round(sum(float(r.get("avg_speed") or 0) for r in roads) / total, 2)
-                    cong = sum(1 for r in roads if r.get("status") == "congested")
-                    veh_snapshot = sum(int(r.get("vehicle_count") or 0) for r in roads)
-                    redis_client.client.hset("traffic:summary", mapping={
-                        "total_roads": total,
-                        "avg_speed": avg_spd,
-                        "congested_roads": cong,
-                        "current_vehicles_snapshot": veh_snapshot,
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                    })
-                    summary = redis_client.get_summary()
-                else:
-                    summary = redis_client.get_summary()
-            else:
-                summary = {}
+            summary = redis_client.get_summary() if redis_client else {}
             msg = {
                 "type": "traffic_update",
                 "roads": [],
@@ -441,7 +422,30 @@ async def startup():
         except Exception:
             pass
 
+    def _progress_ticker():
+        """Background thread: push progress to frontend every 0.5s during loading.
+        Chờ tối đa 3s để loading bắt đầu, sau đó loop cho đến khi completed/error.
+        """
+        # Chờ loading bắt đầu (tối đa 3s)
+        for _ in range(6):
+            if PROGRESS.to_dict().get("status") == "loading":
+                break
+            time.sleep(0.5)
+
+        while True:
+            time.sleep(0.5)
+            status = PROGRESS.to_dict().get("status", "idle")
+            if status == "loading":
+                _do_broadcast()
+            elif status in ("completed", "error"):
+                # Push một lần cuối để frontend biết đã xong
+                _do_broadcast()
+                break
+
     def _run_loader():
+        # Start progress ticker thread
+        ticker = threading.Thread(target=_progress_ticker, daemon=True)
+        ticker.start()
         load_all_data(redis_client, _do_broadcast)
         # After all done, send full data once
         _do_broadcast_final()
@@ -453,7 +457,8 @@ async def startup():
 
     # Start file watcher for data/ folder
     def _watcher_broadcast():
-        _do_broadcast_final()
+        # Được gọi sau mỗi batch trong load_all_data — push progress liên tục
+        _do_broadcast()
 
     _start_file_watcher(_watcher_broadcast)
 
@@ -497,19 +502,44 @@ def _start_file_watcher(broadcast_fn):
                 return True
 
             def _debounced_load(self, path: str):
-                # Debounce: wait 1s after last event before loading
+                # Debounce: wait 2s after last event before loading
                 with self._lock:
                     self._debounce[path] = _time.time()
 
                 def _run():
-                    _time.sleep(1.0)
+                    _time.sleep(2.0)
                     with self._lock:
                         last = self._debounce.get(path, 0)
-                    if _time.time() - last < 0.9:
+                    if _time.time() - last < 1.8:
                         return  # another event came in, skip
                     if redis_client:
-                        logger.info("File watcher triggered: %s", Path(path).name)
-                        load_single_file(Path(path), redis_client, broadcast_fn)
+                        with self._lock:
+                            if getattr(self, "_reload_running", False):
+                                logger.info("File watcher skipped (reload in progress): %s", Path(path).name)
+                                return
+                            self._reload_running = True
+
+                        try:
+                            # Wait until file is fully written (retry up to 10s on Permission denied)
+                            file_path = Path(path)
+                            for attempt in range(10):
+                                try:
+                                    file_path.open("rb").close()
+                                    break  # file is readable
+                                except PermissionError:
+                                    logger.info("File watcher waiting for file lock release: %s (attempt %d)", file_path.name, attempt + 1)
+                                    _time.sleep(1.0)
+                            else:
+                                logger.error("File watcher gave up waiting for: %s", file_path.name)
+                                return
+
+                            logger.info("File watcher triggered full reload: %s", Path(path).name)
+                            load_all_data(redis_client, broadcast_fn)
+                            # Sau khi load xong — push final broadcast với roads đầy đủ
+                            _do_broadcast_final()
+                        finally:
+                            with self._lock:
+                                self._reload_running = False
 
                 threading.Thread(target=_run, daemon=True).start()
 
@@ -521,8 +551,73 @@ def _start_file_watcher(broadcast_fn):
                 if not event.is_directory and self._should_handle(event.src_path):
                     self._debounced_load(event.src_path)
 
+            def on_deleted(self, event):
+                if not event.is_directory and self._should_handle(event.src_path):
+                    filename = Path(event.src_path).name
+                    logger.info("File watcher: file removed — triggering reload without %s", filename)
+
+                    def _run_delete():
+                        if not redis_client:
+                            return
+                        with self._lock:
+                            if getattr(self, "_reload_running", False):
+                                logger.info("File watcher delete skipped (reload in progress): %s", filename)
+                                return
+                            self._reload_running = True
+                        try:
+                            # Xóa cache .bin của file bị gỡ
+                            cache_path = DATA_DIR / "processed" / (Path(event.src_path).stem + ".cache.bin")
+                            if cache_path.exists():
+                                cache_path.unlink()
+                                logger.info("Deleted cache: %s", cache_path.name)
+
+                            # Xóa state của file bị gỡ
+                            from stream_processing.async_loader import _load_state, _save_state
+                            state = _load_state()
+                            state.get("loaded_files", {}).pop(filename, None)
+                            _save_state(state)
+
+                            # Xóa toàn bộ Redis road data + stats để force full reload
+                            # (không thể biết road nào thuộc file nào)
+                            try:
+                                rc = redis_client.client
+                                # Xóa tất cả road keys
+                                road_keys = list(rc.scan_iter(match="road:*", count=500))
+                                if road_keys:
+                                    rc.delete(*road_keys)
+                                # Xóa unique roads set và stats
+                                for key in [
+                                    "traffic:unique_roads",
+                                    "traffic:stats:vehicle_types", "traffic:stats:congestion_levels",
+                                    "traffic:stats:weather", "traffic:stats:districts", "traffic:stats:streets",
+                                    "traffic:stats:total_by_road", "traffic:stats:high_congestion_by_road",
+                                    "traffic:stats:delay_sum_by_road", "traffic:stats:risk_sum_by_road",
+                                    "traffic:stats:speeding_by_road", "traffic:stats:speeding_by_vtype",
+                                    "traffic:stats:fuel_distribution",
+                                ]:
+                                    rc.delete(key)
+                                logger.info("File watcher: cleared Redis for full reload after removing %s", filename)
+                            except Exception as e:
+                                logger.error("File watcher: Redis clear error: %s", e)
+
+                            # Reload toàn bộ từ các file còn lại
+                            load_all_data(redis_client, broadcast_fn)
+                            # Sau khi load xong — push final broadcast với roads đầy đủ
+                            _do_broadcast_final()
+                            logger.info("File watcher: reload complete after removing %s", filename)
+                        finally:
+                            with self._lock:
+                                self._reload_running = False
+
+                    threading.Thread(target=_run_delete, daemon=True).start()
+
+            def on_moved(self, event):
+                # Khi file bị rename/move ra khỏi thư mục — coi như bị xóa
+                if not event.is_directory and self._should_handle(event.src_path):
+                    self.on_deleted(event)
+
         observer = Observer()
-        observer.schedule(_Handler(), str(DATA_DIR), recursive=False)
+        observer.schedule(_Handler(), str(DATA_DIR), recursive=True)
         observer.start()
         _file_watcher_observer = observer
         logger.info("✅ File watcher started on %s", DATA_DIR)
@@ -982,6 +1077,10 @@ async def get_predict(minutes: int = Query(default=10, ge=10, le=60)):
         probs = [_clamp((40.0 - row["speed_kmph"]) / 40.0, 0.0, 1.0) for row in feature_rows]
 
     horizon_multiplier = {10: 1.0, 30: 1.18, 60: 1.35}[minutes]
+    # Moderate-sensitivity profile: more responsive than strict mode without returning to over-flagging.
+    congested_threshold = {10: 0.30, 30: 0.27, 60: 0.24}[minutes]
+    high_threshold = min(0.95, congested_threshold + 0.18)
+    moderate_threshold = max(0.12, congested_threshold * 0.65)
 
     predictions = []
     for road, base_prob, metrics in zip(roads, probs, road_metrics):
@@ -992,21 +1091,41 @@ async def get_predict(minutes: int = Query(default=10, ge=10, le=60)):
         status = metrics["status"]
 
         trend = 0.0
-        if status == "congested" or speed < 18:
-            trend += 0.22
-        elif status == "slow" or speed < 35:
-            trend += 0.10
+        if status == "congested" or speed < 22:
+            trend += 0.24
+        elif status == "slow" or speed < 42:
+            trend += 0.12
+        elif speed < 50:
+            trend += 0.05
         if risk > 65:
             trend += 0.10
+        elif risk > 45:
+            trend += 0.06
         if weather_severity > 0:
             trend += weather_severity * 0.08
 
-        prob = _clamp(base_prob * horizon_multiplier + trend * (horizon_multiplier - 0.85), 0.01, 0.995)
+        # Lift very low probabilities so long-horizon forecasts are more sensitive.
+        base_prob = _clamp(float(base_prob), 0.001, 0.999)
+        base_prob = _clamp(base_prob ** 0.55, 0.01, 0.995)
+        speed_pressure = _clamp((55.0 - speed) / 55.0, 0.0, 1.0)
+        risk_factor = _clamp(risk / 100.0, 0.0, 1.0)
+        sensitivity_boost = {10: 0.01, 30: 0.03, 60: 0.05}[minutes]
+        speed_boost = {10: 0.05, 30: 0.10, 60: 0.16}[minutes] * speed_pressure
+
+        prob = _clamp(
+            base_prob * horizon_multiplier
+            + trend * (horizon_multiplier - 0.82)
+            + speed_boost
+            + risk_factor * 0.06
+            + _clamp(weather_severity, 0.0, 1.0) * 0.05
+            + sensitivity_boost,
+            0.01,
+            0.995,
+        )
 
         # Delay model is bounded by horizon to avoid unrealistic spikes.
         delay_now = _clamp(delay_now, 0.0, max(5.0, minutes * 0.8))
-        speed_factor = _clamp((35.0 - speed) / 35.0, 0.0, 1.0)
-        risk_factor = _clamp(risk / 100.0, 0.0, 1.0)
+        speed_factor = speed_pressure
         status_factor = 0.14 if status == "congested" else 0.06 if status == "slow" else 0.0
 
         delay_base = minutes * (0.04 + 0.28 * prob + 0.22 * speed_factor)
@@ -1032,22 +1151,22 @@ async def get_predict(minutes: int = Query(default=10, ge=10, le=60)):
         else:
             confidence = "Thấp"
 
-        if prob >= 0.85:
+        if prob >= high_threshold:
             severity_level = "Rất cao"
-        elif prob >= 0.70:
+        elif prob >= congested_threshold:
             severity_level = "Cao"
-        elif prob >= 0.50:
+        elif prob >= moderate_threshold:
             severity_level = "Trung bình"
-        elif prob >= 0.35:
+        elif prob >= max(0.05, moderate_threshold * 0.75):
             severity_level = "Thấp"
         else:
             severity_level = "Rất thấp"
 
-        if prob >= 0.80 or delay_minutes >= minutes * 1.4:
+        if prob >= high_threshold or delay_minutes >= minutes * 1.15:
             recommendation = f"Nên tránh tuyến này trong {minutes} phút tới"
-        elif prob >= 0.60:
+        elif prob >= congested_threshold:
             recommendation = "Nên chọn tuyến thay thế để giảm trễ"
-        elif prob >= 0.40:
+        elif prob >= moderate_threshold:
             recommendation = "Theo dõi thêm, có thể chậm theo thời điểm"
         else:
             recommendation = "Lưu thông tương đối ổn định"
@@ -1059,14 +1178,14 @@ async def get_predict(minutes: int = Query(default=10, ge=10, le=60)):
             "Biến động thời tiết ảnh hưởng lưu thông" if weather_impact > 0.5 else "Điều kiện giao thông ổn định"
         )
 
-        predicted_level = "High" if prob >= 0.70 else "Moderate" if prob >= 0.35 else "Low"
+        predicted_level = "High" if prob >= high_threshold else "Moderate" if prob >= moderate_threshold else "Low"
 
         predictions.append(
             {
                 "road_id": road.get("road_id", ""),
                 "location_key": road.get("location_key", road.get("road_id", "")),
                 "congestion_probability": round(float(prob), 4),
-                "predicted_status": "congested" if float(prob) >= 0.5 else "normal",
+                "predicted_status": "congested" if float(prob) >= congested_threshold else "normal",
                 "predicted_congestion_level": predicted_level,
                 "predicted_delay_minutes": delay_minutes,
                 "predicted_delay_range_minutes": delay_range,
@@ -1105,6 +1224,7 @@ async def get_predict(minutes: int = Query(default=10, ge=10, le=60)):
         )
 
     predictions.sort(key=lambda item: item["congestion_probability"], reverse=True)
+    alert_threshold = max(moderate_threshold, congested_threshold - 0.03)
     top_alerts = [
         {
             "road_id": p["road_id"],
@@ -1113,7 +1233,7 @@ async def get_predict(minutes: int = Query(default=10, ge=10, le=60)):
             "recommendation": p["recommendation"],
         }
         for p in predictions
-        if p["congestion_probability"] >= 0.55
+        if p["congestion_probability"] >= alert_threshold
     ][:8]
 
     return {

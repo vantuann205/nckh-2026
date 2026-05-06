@@ -11,6 +11,7 @@ const STATE = {
   roads: [],
   summary: { total_roads: 0, avg_speed: 0, total_vehicles: 0, congested_roads: 0 },
   congested: [],
+  loading: { status: 'idle', total_vehicles: 0, files: {} },
   analysis: null,
   predictions: null,
   connected: false,
@@ -45,6 +46,26 @@ function connectWS() {
       // Stop HTTP polling
       if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
       if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+      // Nếu loading đang chạy hoặc vừa xong mà frontend bị ngắt giữa chừng
+      // → fetch progress ngay để không bị đứng hình
+      fetch(`${API_BASE}/traffic/loading-progress`)
+        .then(r => r.json())
+        .then(progress => {
+          STATE.loading = progress;
+          if (progress.status === 'completed') {
+            // Loading đã xong, fetch roads ngay
+            fetch(`${API_BASE}/traffic/realtime`)
+              .then(r => r.json())
+              .then(data => {
+                if (data.roads) STATE.roads = data.roads;
+                if (data.summary) STATE.summary = data.summary;
+                STATE.lastUpdate = data.timestamp || new Date().toISOString();
+                window.dispatchEvent(new CustomEvent('traffic-update', { detail: STATE }));
+              }).catch(() => {});
+          } else {
+            window.dispatchEvent(new CustomEvent('traffic-update', { detail: STATE }));
+          }
+        }).catch(() => {});
     };
 
     _ws.onmessage = (event) => {
@@ -58,9 +79,7 @@ function connectWS() {
       console.log('🔴 WebSocket disconnected');
       STATE.connected = false;
       _dispatchStatus();
-      // Reconnect after delay
       _reconnectTimer = setTimeout(connectWS, RECONNECT_DELAY);
-      // Start HTTP polling as fallback
       _startPolling();
     };
 
@@ -77,11 +96,35 @@ function connectWS() {
 
 function _handleWSMessage(msg) {
   switch (msg.type) {
+    case 'ping':
+      // Keepalive từ server — pong lại để giữ kết nối
+      if (_ws && _ws.readyState === WebSocket.OPEN) {
+        _ws.send(JSON.stringify({ action: 'ping' }));
+      }
+      break;
     case 'initial_data':
     case 'traffic_update':
-      if (msg.roads) STATE.roads = msg.roads;
-      if (msg.summary) STATE.summary = msg.summary;
+      const prevLoadingStatus = STATE.loading?.status || 'idle';
+      if (msg.loading) STATE.loading = msg.loading;
+
+      const hasRoadsArray = Array.isArray(msg.roads);
+      const loadingNow = (msg.loading && msg.loading.status === 'loading');
+      const loadingCompleted = prevLoadingStatus === 'loading' && STATE.loading?.status === 'completed';
+      if (hasRoadsArray && (!loadingNow || msg.roads.length > 0)) {
+        STATE.roads = msg.roads;
+      }
+      if (msg.summary && (!loadingNow || (hasRoadsArray && msg.roads.length > 0))) {
+        STATE.summary = msg.summary;
+      }
       if (msg.congested) STATE.congested = msg.congested;
+
+      if (loadingCompleted) {
+        STATE.analysis = null;
+        STATE.predictions = null;
+        _analysisFetchedAt = 0;
+        _predictFetchedAt = 0;
+      }
+
       STATE.lastUpdate = msg.timestamp || new Date().toISOString();
       window.dispatchEvent(new CustomEvent('traffic-update', { detail: STATE }));
       break;
@@ -103,14 +146,23 @@ function _startPolling() {
   if (_pollTimer) return;
   console.log('🔄 Starting HTTP polling fallback...');
   _pollTimer = setInterval(async () => {
-    if (STATE.connected) return; // WS reconnected, stop polling
+    if (STATE.connected) { clearInterval(_pollTimer); _pollTimer = null; return; }
     try {
-      const res = await fetch(`${API_BASE}/traffic/realtime`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.roads) STATE.roads = data.roads;
-        if (data.summary) STATE.summary = data.summary;
-        STATE.lastUpdate = data.timestamp || new Date().toISOString();
+      // Fetch progress để hiện đúng % khi WS ngắt giữa loading
+      const progRes = await fetch(`${API_BASE}/traffic/loading-progress`);
+      if (progRes.ok) {
+        const progress = await progRes.json();
+        STATE.loading = progress;
+        if (progress.status === 'completed' || progress.status === 'idle') {
+          // Loading xong — fetch roads
+          const res = await fetch(`${API_BASE}/traffic/realtime`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.roads) STATE.roads = data.roads;
+            if (data.summary) STATE.summary = data.summary;
+            STATE.lastUpdate = data.timestamp || new Date().toISOString();
+          }
+        }
         window.dispatchEvent(new CustomEvent('traffic-update', { detail: STATE }));
       }
     } catch (e) { /* silent */ }

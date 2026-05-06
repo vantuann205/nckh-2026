@@ -6,6 +6,10 @@ Write-Host ""
 
 $maxRetry = 10
 $sleepSeconds = 2
+$pythonExe = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path $pythonExe)) {
+	$pythonExe = "python"
+}
 
 function Stop-ProcessOnPort {
 	param(
@@ -31,10 +35,35 @@ function Stop-ProcessOnPort {
 	}
 }
 
+function Stop-ProcessByCommandPattern {
+	param(
+		[string]$Pattern,
+		[string]$Label
+	)
+
+	$matches = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+		Where-Object {
+			$cmd = $_.CommandLine
+			$cmd -and ($cmd -match $Pattern)
+		}
+
+	foreach ($m in $matches) {
+		$procId = [int]$m.ProcessId
+		if ($procId -le 0) { continue }
+		try {
+			Write-Host "Stopping background process ($Label): PID=$procId Name=$($m.Name)" -ForegroundColor DarkYellow
+			Stop-Process -Id $procId -Force -ErrorAction Stop
+		} catch {
+			Write-Host "Could not stop PID=$procId ($Label): $($_.Exception.Message)" -ForegroundColor Red
+		}
+	}
+}
+
 Write-Host "[0/6] Cleaning old blockers (API/frontend ports)..." -ForegroundColor Yellow
 Stop-ProcessOnPort -Port 8000 -Label "API"
 Stop-ProcessOnPort -Port 3000 -Label "Dashboard"
 Stop-ProcessOnPort -Port 5173 -Label "Dashboard (Vite)"
+Stop-ProcessByCommandPattern -Pattern "scripts\\realtime_producer\.py|ingestion\.producer" -Label "Producer"
 Start-Sleep -Seconds 1
 
 Write-Host "[1/6] Starting Docker services (Redis + Postgres)..." -ForegroundColor Yellow
@@ -69,7 +98,7 @@ if (-not $ok) {
 }
 
 Write-Host "[4/6] Starting FastAPI backend..." -ForegroundColor Yellow
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PSScriptRoot'; uvicorn backend.main:app --host 0.0.0.0 --port 8000"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PSScriptRoot'; & '$pythonExe' -m uvicorn backend.main:app --host 0.0.0.0 --port 8000"
 
 Write-Host "[5/6] Waiting for API /health = 200..." -ForegroundColor Yellow
 $ok = $false
@@ -86,9 +115,15 @@ if (-not $ok) {
 	exit 1
 }
 
-Write-Host "[6/6] Starting producer + frontend..." -ForegroundColor Yellow
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PSScriptRoot'; python scripts/realtime_producer.py --batch-size 500 --interval 0.05"
+Write-Host "[6/6] Starting frontend..." -ForegroundColor Yellow
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PSScriptRoot\dashboard'; npm run dev"
+
+if ($env:ENABLE_PRODUCER -eq "1") {
+	Write-Host "[6/6] ENABLE_PRODUCER=1 → starting realtime producer..." -ForegroundColor Yellow
+	Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PSScriptRoot'; & '$pythonExe' scripts/realtime_producer.py --batch-size 500 --interval 0.05 --reset"
+} else {
+	Write-Host "[6/6] Producer disabled by default for stable predictions. Set ENABLE_PRODUCER=1 to enable realtime stream." -ForegroundColor DarkYellow
+}
 
 Write-Host ""
 Write-Host " ==========================================" -ForegroundColor Green

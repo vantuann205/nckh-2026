@@ -12,7 +12,7 @@ PAGES.dashboard = () => {
 
   return `
     <div class="page-header">
-      <h1>📊 Bảng điều khiển</h1>
+      <h1>Bảng điều khiển</h1>
       <div class="header-actions">
         <span class="ws-badge" id="ws-badge">⏳ Connecting...</span>
         <span class="last-update" id="last-update"></span>
@@ -20,36 +20,36 @@ PAGES.dashboard = () => {
     </div>
 
     <div class="kpi-grid">
-      <div class="kpi-card">
-        <div class="kpi-icon" style="background: linear-gradient(135deg, #3b82f6, #2563eb);">
-          <i data-lucide="map-pin" style="color:#fff"></i>
+      <div class="kpi-card kpi-card-roads">
+        <div class="kpi-icon">
+          <i data-lucide="map-pin"></i>
         </div>
         <div class="kpi-content">
           <div class="kpi-label">Tổng đoạn đường</div>
           <div class="kpi-value" id="kpi-total">${fmt(s.total_roads)}</div>
         </div>
       </div>
-      <div class="kpi-card">
-        <div class="kpi-icon" style="background: linear-gradient(135deg, #22c55e, #16a34a);">
-          <i data-lucide="gauge" style="color:#fff"></i>
+      <div class="kpi-card kpi-card-speed">
+        <div class="kpi-icon">
+          <i data-lucide="gauge"></i>
         </div>
         <div class="kpi-content">
           <div class="kpi-label">Tốc độ TB</div>
-          <div class="kpi-value" id="kpi-speed">${s.avg_speed || 0} <span style="font-size:14px;color:var(--text3)">km/h</span></div>
+          <div class="kpi-value" id="kpi-speed">${s.avg_speed || 0} <span class="kpi-unit">km/h</span></div>
         </div>
       </div>
-      <div class="kpi-card">
-        <div class="kpi-icon" style="background: linear-gradient(135deg, #f59e0b, #d97706);">
-          <i data-lucide="car" style="color:#fff"></i>
+      <div class="kpi-card kpi-card-vehicles">
+        <div class="kpi-icon">
+          <i data-lucide="car"></i>
         </div>
         <div class="kpi-content">
           <div class="kpi-label">Tổng phương tiện</div>
           <div class="kpi-value" id="kpi-vehicles">${fmt(s.total_vehicles)}</div>
         </div>
       </div>
-      <div class="kpi-card">
-        <div class="kpi-icon" style="background: linear-gradient(135deg, #ef4444, #dc2626);">
-          <i data-lucide="alert-triangle" style="color:#fff"></i>
+      <div class="kpi-card kpi-card-congested">
+        <div class="kpi-icon">
+          <i data-lucide="alert-triangle"></i>
         </div>
         <div class="kpi-content">
           <div class="kpi-label">Đoạn tắc nghẽn</div>
@@ -210,7 +210,7 @@ PAGES.monitor = () => `
   </div>
   <div class="charts-grid">
     <div class="chart-card full-width">
-      <div class="chart-header"><h3>Latency</h3></div>
+      <div class="chart-header"><h3>Chu kỳ cập nhật realtime</h3></div>
       <div class="chart-body"><canvas id="chart-latency"></canvas></div>
     </div>
   </div>
@@ -434,18 +434,17 @@ PAGES.advanced = () => `
   </div>
 `;
 
-// === PREDICTION (10m/30m/60m) ===
+// === PREDICTION ===
 PAGES.prediction = () => `
   <div class="page-header forecast-page-header">
-    <h1>Dự báo tắc nghẽn 10/30/60 phút</h1>
+    <h1>Dự báo tắc nghẽn</h1>
     <div class="header-actions forecast-header-actions">
-      <span class="forecast-kicker">Model train: traffic_data_0 + traffic_data_1</span>
       <select id="pred-horizon" class="forecast-select" onchange="loadPredictions()">
         <option value="10">10 phút tới</option>
         <option value="30">30 phút tới</option>
         <option value="60">60 phút tới</option>
       </select>
-      <button class="btn-primary" onclick="loadPredictions()">Cập nhật dự báo</button>
+      <span class="ws-badge" id="ws-badge">⏳ Connecting...</span>
     </div>
   </div>
 

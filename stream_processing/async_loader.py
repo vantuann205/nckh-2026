@@ -63,7 +63,7 @@ class LoaderProgress:
             self.total_vehicles += delta
             now = time.monotonic()
             elapsed = now - self._last_ts
-            if elapsed >= 0.25:
+            if elapsed >= 0.15:   # update nhanh hơn: 150ms thay vì 250ms
                 self.vehicles_per_sec = round(
                     (self.total_vehicles - self._last_count) / elapsed, 0)
                 self._last_count = self.total_vehicles
@@ -403,27 +403,39 @@ def _new_acc() -> dict:
 
 # ── Road summary ──────────────────────────────────────────────────────────────
 
-def _recompute_road_summary(redis_client):
-    """Compute avg_speed from _speed_sum/_speed_count, total_roads from unique set."""
+def _recompute_road_summary(redis_client, acc: dict = None):
+    """Recompute road-level summary.
+
+    Nếu có acc (accumulator từ _load_file), dùng acc để tính avg_speed chính xác
+    từ toàn bộ records thay vì đọc lại từ Redis (Redis chỉ lưu xe cuối cùng mỗi tuyến).
+    """
     try:
         rc = redis_client.client
         unique_ids = list(rc.smembers("traffic:unique_roads"))
         total_roads = len(unique_ids)
         congested = 0
+        current_vehicles_snapshot = 0
+
         if unique_ids:
             vals = rc.mget([f"road:{rid}" for rid in unique_ids])
             for v in vals:
                 if v:
                     try:
                         r = orjson.loads(v)
+                        current_vehicles_snapshot += int(r.get("vehicle_count") or 0)
                         if r.get("status") == "congested":
                             congested += 1
                     except Exception:
                         pass
 
-        speed_sum   = float(rc.hget("traffic:summary", "_speed_sum")   or 0)
-        speed_count = float(rc.hget("traffic:summary", "_speed_count") or 0)
-        avg_speed   = round(speed_sum / speed_count, 2) if speed_count > 0 else 0
+        # avg_speed: dùng accumulator nếu có (chính xác), fallback đọc Redis
+        if acc and acc.get("count", 0) > 0:
+            avg_speed = round(acc["speed_sum"] / acc["count"], 2)
+        else:
+            # Fallback: đọc từ Redis summary (đã tích lũy qua _flush_stats_once)
+            speed_sum   = float(rc.hget("traffic:summary", "_speed_sum")   or 0)
+            speed_count = float(rc.hget("traffic:summary", "_speed_count") or 0)
+            avg_speed   = round(speed_sum / speed_count, 2) if speed_count > 0 else 0
 
         fuel_sum   = float(rc.hget("traffic:summary", "_fuel_sum")   or 0)
         fuel_count = float(rc.hget("traffic:summary", "_fuel_count") or 0)
@@ -433,13 +445,14 @@ def _recompute_road_summary(redis_client):
         total_districts = rc.hlen("traffic:stats:districts")
 
         rc.hset("traffic:summary", mapping={
-            "total_roads":      total_roads,
-            "avg_speed":        avg_speed,
-            "congested_roads":  congested,
-            "avg_fuel_level":   avg_fuel,
-            "total_streets":    total_streets,
-            "total_districts":  total_districts,
-            "updated_at":       _NOW_ISO or datetime.now(timezone.utc).isoformat(),
+            "total_roads":               total_roads,
+            "avg_speed":                 avg_speed,
+            "congested_roads":           congested,
+            "current_vehicles_snapshot": current_vehicles_snapshot,
+            "avg_fuel_level":            avg_fuel,
+            "total_streets":             total_streets,
+            "total_districts":           total_districts,
+            "updated_at":                _NOW_ISO or datetime.now(timezone.utc).isoformat(),
         })
     except Exception as e:
         logger.warning("Road summary recompute error: %s", e)
@@ -583,7 +596,10 @@ def _load_file(file_path: Path, redis_client, broadcast_fn: Optional[Callable] =
 
     # Flush all stats ONCE
     _flush_stats_once(acc, redis_client)
-    _recompute_road_summary(redis_client)
+    # Dùng acc của file này để recompute tạm — sau khi tất cả file xong
+    # load_all_data sẽ gọi lại _recompute_road_summary(redis_client) không có acc
+    # để tính avg_speed từ _speed_sum/_speed_count tổng hợp toàn bộ files
+    _recompute_road_summary(redis_client, acc)
 
     elapsed = time.monotonic() - t0
     logger.info("Loaded %s: %d records in %.1fs → %.0f rec/s",
@@ -670,6 +686,8 @@ def load_all_data(redis_client, broadcast_fn: Optional[Callable] = None):
     file_totals = {f.name: max(1000, int(f.stat().st_size / (1024 * 1024) * 500))
                    for f in files}
     PROGRESS.start(file_totals)
+    if broadcast_fn:
+        broadcast_fn()
     logger.info("Loading %d file(s) in parallel: %s", len(files), [f.name for f in files])
 
     t_global = time.monotonic()
@@ -703,6 +721,10 @@ def load_all_data(redis_client, broadcast_fn: Optional[Callable] = None):
     if errors:
         PROGRESS.fail("; ".join(errors))
         return
+
+    # Sau khi tất cả file xong, tính lại avg_speed từ _speed_sum/_speed_count
+    # tổng hợp toàn bộ — đây là con số chính xác duy nhất
+    _recompute_road_summary(redis_client)
 
     elapsed = time.monotonic() - t_global
     total   = PROGRESS.total_vehicles

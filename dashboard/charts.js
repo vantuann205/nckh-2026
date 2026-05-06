@@ -5,6 +5,23 @@
 const API_BASE = 'http://localhost:8000';
 
 let chartInstances = {};
+const MONITOR_INTERVAL_POINTS = 20;
+let _monitorIntervals = [];
+let _lastTrafficEventAt = 0;
+
+window.addEventListener('traffic-update', () => {
+  const now = Date.now();
+  if (_lastTrafficEventAt > 0) {
+    const intervalMs = now - _lastTrafficEventAt;
+    if (intervalMs > 0 && intervalMs < 60000) {
+      _monitorIntervals.push(intervalMs);
+      if (_monitorIntervals.length > MONITOR_INTERVAL_POINTS) {
+        _monitorIntervals = _monitorIntervals.slice(-MONITOR_INTERVAL_POINTS);
+      }
+    }
+  }
+  _lastTrafficEventAt = now;
+});
 
 function destroyChart(id) {
   if (chartInstances[id]) {
@@ -373,8 +390,9 @@ window.renderMonitorCharts = function () {
   const ctx = document.getElementById('chart-latency');
   if (!ctx) return;
   const colors = getChartColors();
-  const labels = Array.from({ length: 20 }, (_, i) => `${i + 1}s`);
-  const dataVals = Array.from({ length: 20 }, () => Math.random() * 500 + 100);
+  const series = _monitorIntervals.length ? _monitorIntervals : [0];
+  const labels = series.map((_, i) => `#${i + 1}`);
+  const dataVals = series.map((v) => Math.round(v));
 
   if (chartInstances['latency']) {
     const c = chartInstances['latency'];
@@ -384,7 +402,7 @@ window.renderMonitorCharts = function () {
   } else {
     chartInstances['latency'] = new Chart(ctx, {
       type: 'line',
-      data: { labels, datasets: [{ label: 'Latency (ms)', data: dataVals, borderColor: colors.blue, backgroundColor: colors.blue + '33', fill: true, tension: 0.4, pointRadius: 2, borderWidth: 2 }] },
+      data: { labels, datasets: [{ label: 'Chu kỳ cập nhật (ms)', data: dataVals, borderColor: colors.blue, backgroundColor: colors.blue + '33', fill: true, tension: 0.4, pointRadius: 2, borderWidth: 2 }] },
       options: { animation: { x: { type: 'number', easing: 'linear', duration: 800, from: NaN } }, responsive: true, maintainAspectRatio: false, plugins: { tooltip: { animation: { duration: 200 }}, legend: { display: false } }, scales: { y: { border: { dash: [4, 4] }, beginAtZero: true }, x: { grid: { display: false } } } },
     });
   }

@@ -8,6 +8,26 @@ const API_BASE_PRED = window.API_BASE || 'http://localhost:8000';
 // Cache predictions data
 let _predData = null;
 let _predRoadsData = null;
+let _predRequestSeq = 0;
+
+window.renderPredictionLoadingState = function () {
+  _setEl('pred-kpi-time', 'Đang đồng bộ dữ liệu...');
+
+  const box = document.getElementById('pred-insights');
+  if (box) {
+    box.innerHTML = `
+      <div class="forecast-insight forecast-insight-info">
+        <div class="forecast-insight-label">Trạng thái dữ liệu</div>
+        <div class="forecast-insight-title forecast-insight-title-small">Hệ thống đang nạp dữ liệu nền, biểu đồ dự báo sẽ tự cập nhật ngay khi hoàn tất.</div>
+      </div>
+    `;
+  }
+
+  const tbody = document.getElementById('pred-tbody');
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text3)">Đang đồng bộ dữ liệu dự báo...</td></tr>';
+  }
+};
 
 // ── Hourly congestion pattern (based on traffic research for HCMC) ──
 const HOURLY_CONGESTION_PATTERN = [
@@ -21,6 +41,7 @@ const HOUR_LABELS = Array.from({length: 24}, (_, i) => `${String(i).padStart(2,'
 
 // ── Main entry: load predictions ──
 window.loadPredictions = async function () {
+  const requestSeq = ++_predRequestSeq;
   const horizon = parseInt(document.getElementById('pred-horizon')?.value || '10', 10);
   const selectedHorizon = [10, 30, 60].includes(horizon) ? horizon : 10;
 
@@ -33,6 +54,10 @@ window.loadPredictions = async function () {
 
     const predJson = await predRes.json();
     const roadsJson = await roadsRes.json();
+
+    if (requestSeq !== _predRequestSeq) {
+      return;
+    }
 
     _predData = predJson.predictions || [];
     _predRoadsData = roadsJson.roads || [];
@@ -55,6 +80,9 @@ window.loadPredictions = async function () {
     populateRouteSelectors(_predRoadsData);
 
   } catch (err) {
+    if (requestSeq !== _predRequestSeq) {
+      return;
+    }
     console.error('Prediction load error:', err);
     // Fallback: generate from current roads data
     const roads = (window.DB?.state?.roads) || [];
@@ -76,19 +104,28 @@ function generateLocalPredictions(roads, horizon) {
     const speed = parseFloat(road.avg_speed || 0);
     const risk = parseFloat(road.risk_score || 0);
     const weather = (road.weather_condition || '').toLowerCase();
+    const riskFactor = Math.max(0, Math.min(1, risk / 100));
+    const speedPressure = Math.max(0, Math.min(1, (55 - speed) / 55));
+    const weatherFactor = (weather.includes('rain') || weather.includes('storm') || weather.includes('drizzle')) ? 1 : 0;
+    const sensitivityBoost = ({10: 0.01, 30: 0.03, 60: 0.05})[horizon] || 0.01;
+    const speedBoost = (({10: 0.05, 30: 0.10, 60: 0.16})[horizon] || 0.05) * speedPressure;
+    const congestedThreshold = ({10: 0.30, 30: 0.27, 60: 0.24})[horizon] || 0.30;
+    const highThreshold = Math.min(0.95, congestedThreshold + 0.18);
+    const moderateThreshold = Math.max(0.12, congestedThreshold * 0.65);
 
     // Logistic-like probability based on speed + risk + weather
     let prob = Math.max(0, Math.min(1, (50 - speed) / 50));
     prob += risk / 200;
     if (weather.includes('rain') || weather.includes('storm')) prob += 0.15;
-    prob = Math.max(0, Math.min(1, prob));
+    prob = Math.max(0.001, Math.min(0.999, prob));
+    prob = Math.pow(prob, 0.55);
+    prob += speedBoost + (riskFactor * 0.06) + (weatherFactor * 0.05) + sensitivityBoost;
+    prob = Math.max(0.01, Math.min(0.995, prob));
 
-    const speedFactor = Math.max(0, Math.min(1, (35 - speed) / 35));
-    const riskFactor = Math.max(0, Math.min(1, risk / 100));
+    const speedFactor = speedPressure;
     const delayNow = Math.max(0, Math.min(horizon * 0.8, Number(road.estimated_delay || road.estimated_delay_minutes || 0)));
     const status = String(road.status || '').toLowerCase();
     const statusFactor = status === 'congested' ? 0.14 : status === 'slow' ? 0.06 : 0;
-    const weatherFactor = (weather.includes('rain') || weather.includes('storm') || weather.includes('drizzle')) ? 1 : 0;
 
     const delayBase = horizon * (0.04 + 0.28 * prob + 0.22 * speedFactor);
     let delay = delayBase
@@ -105,15 +142,15 @@ function generateLocalPredictions(roads, horizon) {
       road_id: road.road_id,
       location_key: road.location_key || road.road_id,
       congestion_probability: Math.round(prob * 10000) / 10000,
-      predicted_status: prob >= 0.5 ? 'congested' : 'normal',
+      predicted_status: prob >= congestedThreshold ? 'congested' : 'normal',
       predicted_delay_minutes: delay,
       predicted_delay_range_minutes: {
         min: Math.max(0, Math.round(delay * 0.75 * 10) / 10),
         max: Math.round((delay * 1.35 + 0.8) * 10) / 10,
       },
-      confidence: prob >= 0.75 ? 'Cao' : prob >= 0.45 ? 'Trung bình' : 'Thấp',
-      severity_level: prob >= 0.85 ? 'Rất cao' : prob >= 0.7 ? 'Cao' : prob >= 0.5 ? 'Trung bình' : prob >= 0.3 ? 'Thấp' : 'Rất thấp',
-      recommendation: prob >= 0.75 ? 'Chuyển tuyến ngay' : prob >= 0.5 ? 'Giảm tốc độ, chuẩn bị dừng' : prob >= 0.3 ? 'Theo dõi chặt chẽ' : 'Lưu thông bình thường',
+      confidence: prob >= highThreshold ? 'Cao' : prob >= moderateThreshold ? 'Trung bình' : 'Thấp',
+      severity_level: prob >= highThreshold ? 'Rất cao' : prob >= congestedThreshold ? 'Cao' : prob >= moderateThreshold ? 'Trung bình' : prob >= Math.max(0.05, moderateThreshold * 0.75) ? 'Thấp' : 'Rất thấp',
+      recommendation: prob >= highThreshold ? 'Chuyển tuyến ngay' : prob >= congestedThreshold ? 'Nên chọn tuyến thay thế' : prob >= moderateThreshold ? 'Theo dõi chặt chẽ' : 'Lưu thông bình thường',
       reason_summary: speed < 20 ? 'Tốc độ thấp + rủi ro cao' : weather.includes('rain') ? 'Ảnh hưởng thời tiết + rủi ro' : 'Điều kiện lưu thông ổn định',
       top_factors: [
         {
@@ -612,86 +649,278 @@ function renderPredCharts(preds, horizon) {
   renderHourlyForecastChart(horizon);
 }
 
+// ── Shared tooltip builder ──
+// Lưu ý Chart.js v3+: mode/intersect đặt trong options.interaction, không phải plugins.tooltip
+function _buildTooltipPlugin(labelFn) {
+  return {
+    enabled: true,
+    backgroundColor: 'rgba(11,19,38,0.97)',
+    borderColor: 'rgba(56,189,248,0.25)',
+    borderWidth: 1,
+    titleColor: '#dae2fd',
+    bodyColor: '#94a3b8',
+    padding: { top: 10, bottom: 10, left: 14, right: 14 },
+    cornerRadius: 10,
+    titleFont: { family: "'JetBrains Mono', monospace", size: 12, weight: '600' },
+    bodyFont: { family: "'Inter', sans-serif", size: 12 },
+    displayColors: true,
+    boxWidth: 10,
+    boxHeight: 10,
+    boxPadding: 4,
+    callbacks: labelFn || {},
+  };
+}
+
+// interaction config cho bar chart — hover đúng thanh nào hiện thanh đó
+const _BAR_INTERACTION = { mode: 'nearest', intersect: true, axis: 'y' };
+// interaction config cho histogram (vertical bar)
+const _HIST_INTERACTION = { mode: 'nearest', intersect: true, axis: 'x' };
+
 // Chart 1: Phân bố xác suất (histogram)
 function renderProbDistChart(preds) {
-  const buckets = [0, 0, 0, 0, 0]; // 0-20, 20-40, 40-60, 60-80, 80-100
+  const BUCKET_LABELS  = ['0 – 20%', '20 – 40%', '40 – 60%', '60 – 80%', '80 – 100%'];
+  const BUCKET_COLORS  = ['#22c55e', '#84cc16', '#eab308', '#f97316', '#ef4444'];
+  const BUCKET_HOVER   = ['#16a34a', '#65a30d', '#ca8a04', '#ea580c', '#dc2626'];
+  const BUCKET_LABELS_VN = ['An toàn', 'Thấp', 'Trung bình', 'Cao', 'Rất cao'];
+
+  // Collect road names per bucket for tooltip
+  const buckets = [[], [], [], [], []];
   preds.forEach(p => {
     const pct = p.congestion_probability * 100;
-    if (pct < 20) buckets[0]++;
-    else if (pct < 40) buckets[1]++;
-    else if (pct < 60) buckets[2]++;
-    else if (pct < 80) buckets[3]++;
-    else buckets[4]++;
+    const idx = pct < 20 ? 0 : pct < 40 ? 1 : pct < 60 ? 2 : pct < 80 ? 3 : 4;
+    buckets[idx].push(p.road_id);
   });
 
   _renderChart('chart-pred-dist', 'bar', {
-    labels: ['0-20%', '20-40%', '40-60%', '60-80%', '80-100%'],
+    labels: BUCKET_LABELS,
     datasets: [{
       label: 'Số tuyến đường',
-      data: buckets,
-      backgroundColor: ['#22c55e', '#84cc16', '#eab308', '#f97316', '#ef4444'],
-      borderRadius: 6,
+      data: buckets.map(b => b.length),
+      backgroundColor: BUCKET_COLORS.map(c => c + 'cc'),
+      hoverBackgroundColor: BUCKET_HOVER,
+      borderColor: BUCKET_COLORS,
+      borderWidth: 1.5,
+      borderRadius: 8,
+      borderSkipped: false,
     }]
   }, {
-    plugins: { legend: { display: false } },
-    scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
+    interaction: _HIST_INTERACTION,
+    plugins: {
+      legend: { display: false },
+      tooltip: _buildTooltipPlugin({
+        title: (items) => {
+          const i = items[0].dataIndex;
+          return `Mức rủi ro: ${BUCKET_LABELS_VN[i]} (${BUCKET_LABELS[i]})`;
+        },
+        label: (item) => ` ${item.raw} tuyến đường`,
+        afterLabel: (item) => {
+          const roads = buckets[item.dataIndex].slice(0, 5);
+          if (!roads.length) return '';
+          const lines = roads.map(r => `  • ${r}`);
+          if (buckets[item.dataIndex].length > 5) lines.push(`  … và ${buckets[item.dataIndex].length - 5} tuyến khác`);
+          return lines;
+        },
+      }),
+    },
+    scales: {
+      x: {
+        grid: { display: false },
+        ticks: { font: { size: 11 } },
+      },
+      y: {
+        beginAtZero: true,
+        ticks: { stepSize: 1, precision: 0 },
+        grid: { color: 'rgba(255,255,255,0.05)' },
+      },
+    },
   });
 }
 
-// Chart 2: Delay distribution
+// Chart 2: Top delay (horizontal bar)
 function renderDelayChart(preds) {
-  const sorted = [...preds].sort((a, b) => b.predicted_delay_minutes - a.predicted_delay_minutes).slice(0, 15);
+  const sorted = [...preds]
+    .sort((a, b) => b.predicted_delay_minutes - a.predicted_delay_minutes)
+    .slice(0, 15);
+
+  const fullLabels = sorted.map(p => p.road_id);
+  const colors = sorted.map(p =>
+    p.predicted_delay_minutes > 10 ? '#ef4444' :
+    p.predicted_delay_minutes > 5  ? '#f97316' : '#eab308'
+  );
+  const hoverColors = sorted.map(p =>
+    p.predicted_delay_minutes > 10 ? '#dc2626' :
+    p.predicted_delay_minutes > 5  ? '#ea580c' : '#ca8a04'
+  );
+
   _renderChart('chart-pred-delay', 'bar', {
     labels: sorted.map(p => _shortId(p.road_id)),
     datasets: [{
       label: 'Trễ dự kiến (phút)',
-      data: sorted.map(p => p.predicted_delay_minutes),
-      backgroundColor: sorted.map(p =>
-        p.predicted_delay_minutes > 10 ? '#ef4444' :
-        p.predicted_delay_minutes > 5  ? '#f97316' : '#eab308'
-      ),
-      borderRadius: 4,
+      data: sorted.map(p => +p.predicted_delay_minutes.toFixed(1)),
+      backgroundColor: colors.map(c => c + 'cc'),
+      hoverBackgroundColor: hoverColors,
+      borderColor: colors,
+      borderWidth: 1.5,
+      borderRadius: { topRight: 6, bottomRight: 6 },
+      borderSkipped: 'left',
     }]
   }, {
     indexAxis: 'y',
-    plugins: { legend: { display: false } },
-    scales: { x: { beginAtZero: true } }
+    interaction: _BAR_INTERACTION,
+    plugins: {
+      legend: { display: false },
+      tooltip: _buildTooltipPlugin({
+        title: (items) => fullLabels[items[0].dataIndex],
+        label: (item) => ` Delay dự báo: ${item.raw} phút`,
+        afterLabel: (item) => {
+          const p = sorted[item.dataIndex];
+          const lines = [];
+          if (p.current_speed) lines.push(` Tốc độ hiện tại: ${p.current_speed.toFixed(1)} km/h`);
+          if (p.congestion_probability != null) lines.push(` Xác suất tắc: ${(p.congestion_probability * 100).toFixed(1)}%`);
+          if (p.predicted_delay_range_minutes) {
+            lines.push(` Khoảng: ${p.predicted_delay_range_minutes.min} – ${p.predicted_delay_range_minutes.max} phút`);
+          }
+          return lines;
+        },
+      }),
+    },
+    scales: {
+      x: {
+        beginAtZero: true,
+        grid: { color: 'rgba(255,255,255,0.05)' },
+        ticks: { callback: v => v + ' ph' },
+      },
+      y: {
+        grid: { display: false },
+        ticks: { font: { size: 11 } },
+      },
+    },
   });
 }
 
 // Chart 3: Top 10 nguy hiểm
 function renderTop10DangerChart(preds) {
-  const top10 = [...preds].sort((a, b) => b.congestion_probability - a.congestion_probability).slice(0, 10);
+  const top10 = [...preds]
+    .sort((a, b) => b.congestion_probability - a.congestion_probability)
+    .slice(0, 10);
+
+  const fullLabels = top10.map(p => p.road_id);
+  const probs = top10.map(p => +(p.congestion_probability * 100).toFixed(1));
+
+  // Gradient: darker red for higher prob
+  const colors = probs.map(v => {
+    const t = v / 100;
+    const r = Math.round(239 + (220 - 239) * (1 - t));
+    const g = Math.round(68  * (1 - t));
+    const b = Math.round(68  * (1 - t));
+    return `rgb(${r},${g},${b})`;
+  });
+
   _renderChart('chart-pred-top10', 'bar', {
     labels: top10.map(p => _shortId(p.road_id)),
     datasets: [{
       label: 'Xác suất tắc (%)',
-      data: top10.map(p => (p.congestion_probability * 100).toFixed(1)),
-      backgroundColor: '#ef4444',
-      borderRadius: 4,
+      data: probs,
+      backgroundColor: colors.map(c => c.replace('rgb', 'rgba').replace(')', ',0.80)')),
+      hoverBackgroundColor: colors,
+      borderColor: colors,
+      borderWidth: 1.5,
+      borderRadius: { topRight: 6, bottomRight: 6 },
+      borderSkipped: 'left',
     }]
   }, {
     indexAxis: 'y',
-    plugins: { legend: { display: false } },
-    scales: { x: { beginAtZero: true, max: 100 } }
+    plugins: {
+      legend: { display: false },
+      tooltip: _buildTooltipPlugin({
+        title: (items) => fullLabels[items[0].dataIndex],
+        label: (item) => ` Xác suất tắc: ${item.raw}%`,
+        afterLabel: (item) => {
+          const p = top10[item.dataIndex];
+          const lines = [];
+          if (p.current_speed) lines.push(` Tốc độ: ${p.current_speed.toFixed(1)} km/h`);
+          if (p.predicted_delay_minutes) lines.push(` Delay dự báo: ${p.predicted_delay_minutes.toFixed(1)} phút`);
+          lines.push(` Mức độ: ${p.severity_level || (item.raw >= 70 ? 'Rất cao' : item.raw >= 40 ? 'Cao' : 'Trung bình')}`);
+          lines.push(` Khuyến nghị: ${p.recommendation || 'Theo dõi'}`);
+          return lines;
+        },
+      }),
+    },
+    scales: {
+      x: {
+        beginAtZero: true,
+        max: 100,
+        grid: { color: 'rgba(255,255,255,0.05)' },
+        ticks: { callback: v => v + '%' },
+      },
+      y: {
+        grid: { display: false },
+        ticks: { font: { size: 11 } },
+      },
+    },
   });
 }
 
 // Chart 4: Top 10 an toàn
 function renderTop10SafeChart(preds) {
-  const safe10 = [...preds].sort((a, b) => a.congestion_probability - b.congestion_probability).slice(0, 10);
+  const safe10 = [...preds]
+    .sort((a, b) => a.congestion_probability - b.congestion_probability)
+    .slice(0, 10);
+
+  const fullLabels = safe10.map(p => p.road_id);
+  const probs = safe10.map(p => +(p.congestion_probability * 100).toFixed(1));
+
+  // Gradient: deeper green for lower prob
+  const colors = probs.map(v => {
+    const t = 1 - v / 100;
+    const r = Math.round(34  * (1 - t * 0.4));
+    const g = Math.round(197 - 40 * (1 - t));
+    const b = Math.round(94  * (1 - t * 0.3));
+    return `rgb(${r},${g},${b})`;
+  });
+
   _renderChart('chart-pred-safe10', 'bar', {
     labels: safe10.map(p => _shortId(p.road_id)),
     datasets: [{
       label: 'Xác suất tắc (%)',
-      data: safe10.map(p => (p.congestion_probability * 100).toFixed(1)),
-      backgroundColor: '#22c55e',
-      borderRadius: 4,
+      data: probs,
+      backgroundColor: colors.map(c => c.replace('rgb', 'rgba').replace(')', ',0.80)')),
+      hoverBackgroundColor: colors,
+      borderColor: colors,
+      borderWidth: 1.5,
+      borderRadius: { topRight: 6, bottomRight: 6 },
+      borderSkipped: 'left',
     }]
   }, {
     indexAxis: 'y',
-    plugins: { legend: { display: false } },
-    scales: { x: { beginAtZero: true, max: 100 } }
+    plugins: {
+      legend: { display: false },
+      tooltip: _buildTooltipPlugin({
+        title: (items) => fullLabels[items[0].dataIndex],
+        label: (item) => ` Xác suất tắc: ${item.raw}%`,
+        afterLabel: (item) => {
+          const p = safe10[item.dataIndex];
+          const lines = [];
+          if (p.current_speed) lines.push(` Tốc độ: ${p.current_speed.toFixed(1)} km/h`);
+          if (p.predicted_delay_minutes) lines.push(` Delay dự báo: ${p.predicted_delay_minutes.toFixed(1)} phút`);
+          lines.push(` Trạng thái: ${p.predicted_status === 'normal' ? 'Thông thoáng' : 'Cần theo dõi'}`);
+          if (p.recommendation) lines.push(` ${p.recommendation}`);
+          return lines;
+        },
+      }),
+    },
+    scales: {
+      x: {
+        beginAtZero: true,
+        max: 100,
+        grid: { color: 'rgba(255,255,255,0.05)' },
+        ticks: { callback: v => v + '%' },
+      },
+      y: {
+        grid: { display: false },
+        ticks: { font: { size: 11 } },
+      },
+    },
   });
 }
 
@@ -849,29 +1078,53 @@ function _renderChart(canvasId, type, data, options = {}) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
 
-  // Destroy existing chart
   if (window.chartInstances?.[canvasId]) {
     window.chartInstances[canvasId].destroy();
   }
 
-  const isDark = document.body.classList.contains('dark');
-  const textColor = isDark ? '#94a3b8' : '#64748b';
-  const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+  const textColor = '#94a3b8';
+  const gridColor = 'rgba(255,255,255,0.05)';
 
   const defaultOptions = {
     responsive: true,
     maintainAspectRatio: false,
-    animation: { duration: 400 },
+    animation: { duration: 350, easing: 'easeOutQuart' },
     plugins: {
-      legend: { labels: { color: textColor, font: { size: 11 } } },
-      tooltip: { mode: 'index', intersect: false }
+      legend: {
+        labels: {
+          color: textColor,
+          font: { size: 11, family: "'Inter', sans-serif" },
+          boxWidth: 12,
+          padding: 16,
+        },
+      },
+      // Tooltip default tối giản — mỗi chart tự override qua _buildTooltipPlugin
+      tooltip: {
+        enabled: true,
+        backgroundColor: 'rgba(11,19,38,0.97)',
+        borderColor: 'rgba(56,189,248,0.25)',
+        borderWidth: 1,
+        titleColor: '#dae2fd',
+        bodyColor: '#94a3b8',
+        padding: { top: 10, bottom: 10, left: 14, right: 14 },
+        cornerRadius: 10,
+        titleFont: { family: "'JetBrains Mono', monospace", size: 12, weight: '600' },
+        bodyFont: { family: "'Inter', sans-serif", size: 12 },
+      },
     },
     scales: {
-      x: { ticks: { color: textColor, font: { size: 10 } }, grid: { color: gridColor } },
-      y: { ticks: { color: textColor, font: { size: 10 } }, grid: { color: gridColor } }
-    }
+      x: {
+        ticks: { color: textColor, font: { size: 10, family: "'Inter', sans-serif" } },
+        grid: { color: gridColor },
+      },
+      y: {
+        ticks: { color: textColor, font: { size: 10, family: "'Inter', sans-serif" } },
+        grid: { color: gridColor },
+      },
+    },
   };
 
+  // Deep merge — options truyền vào luôn thắng default
   const mergedOptions = _deepMerge(defaultOptions, options);
 
   const chart = new Chart(canvas, { type, data, options: mergedOptions });
@@ -901,5 +1154,9 @@ window._initPredictionPage = function () {
   populateRouteSelectors((window.DB?.state?.roads) || []);
   _bindRouteSelectionEvents();
   _syncRouteControlClasses();
+  if ((window.DB?.state?.loading?.status || 'idle') === 'loading') {
+    window.renderPredictionLoadingState();
+    return;
+  }
   loadPredictions();
 };

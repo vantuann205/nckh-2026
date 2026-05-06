@@ -3,6 +3,7 @@ WebSocket Connection Manager
 - Filtered broadcast by road_id or region
 - Connection lifecycle management
 - Client subscription system
+- Keepalive ping every 20s to prevent browser timeout
 """
 
 import json
@@ -18,21 +19,40 @@ class ConnectionManager:
     """Manage WebSocket connections with subscription filtering"""
 
     def __init__(self):
-        # client_id → WebSocket
         self.active_connections: Dict[str, WebSocket] = {}
-        # client_id → set of subscriptions (road_id, "all", "region:xxx")
         self.subscriptions: Dict[str, Set[str]] = {}
         self._counter = 0
+        self._ping_task: Optional[asyncio.Task] = None
 
     async def connect(self, websocket: WebSocket) -> str:
-        """Accept new WebSocket connection, return client_id"""
         await websocket.accept()
         self._counter += 1
         client_id = f"client_{self._counter}"
         self.active_connections[client_id] = websocket
-        self.subscriptions[client_id] = {"all"}  # default: subscribe all
+        self.subscriptions[client_id] = {"all"}
         logger.info(f"🔗 Client connected: {client_id} (total: {len(self.active_connections)})")
+
+        # Start keepalive task if not running
+        if self._ping_task is None or self._ping_task.done():
+            self._ping_task = asyncio.create_task(self._keepalive_loop())
+
         return client_id
+
+    async def _keepalive_loop(self):
+        """Send ping every 20s to all clients to prevent browser WS timeout."""
+        while self.active_connections:
+            await asyncio.sleep(20)
+            if not self.active_connections:
+                break
+            ping_msg = json.dumps({"type": "ping"})
+            disconnected = []
+            for client_id, ws in list(self.active_connections.items()):
+                try:
+                    await ws.send_text(ping_msg)
+                except Exception:
+                    disconnected.append(client_id)
+            for cid in disconnected:
+                self.disconnect(cid)
 
     def disconnect(self, client_id: str):
         """Remove disconnected client"""
