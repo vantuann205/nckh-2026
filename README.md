@@ -25,7 +25,7 @@ Script tự động:
 6. Khởi động Vite frontend (port 3000)
 7. Mở trình duyệt tự động
 
-## Chạy lại (đã cài rồi)
+## Chạy lại
 
 ```powershell
 .\setup.ps1 -SkipInstall
